@@ -1,0 +1,22 @@
+{
+  "name": "payroll-backend",
+  "version": "1.0.50",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "bun run --watch src/index.ts"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.2",
+    "@elysiajs/jwt": "^1.4.2",
+    "@prisma/client": "^7.8.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "elysia": "latest",
+    "prisma": "^7.8.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "bun-types": "latest"
+  },
+  "module": "src/index.js"
+}
