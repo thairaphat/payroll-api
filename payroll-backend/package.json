@@ -12,6 +12,7 @@
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "elysia": "latest",
+    "googleapis": "^171.4.0",
     "prisma": "^7.8.0",
     "zod": "^4.3.6"
   },
