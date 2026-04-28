@@ -10,14 +10,22 @@ const attendanceSchema = z.object({
   note: z.string().optional(),
 });
 
-export async function readAttendanceFromGoogleSheet(sheetId: string) {
-  const credentialsText = process.env.GOOGLE_SHEETS_CREDENTIALS;
+function getGoogleCredentials() {
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n");
 
-  if (!credentialsText) {
-    throw new Error("Missing GOOGLE_SHEETS_CREDENTIALS");
+  if (!clientEmail || !privateKey) {
+    throw new Error("Missing GOOGLE_CLIENT_EMAIL or GOOGLE_PRIVATE_KEY");
   }
 
-  const credentials = JSON.parse(credentialsText);
+  return {
+    client_email: clientEmail,
+    private_key: privateKey,
+  };
+}
+
+export async function readAttendanceFromGoogleSheet(sheetId: string) {
+  const credentials = getGoogleCredentials();
 
   const auth = new google.auth.GoogleAuth({
     credentials,
@@ -28,24 +36,30 @@ export async function readAttendanceFromGoogleSheet(sheetId: string) {
 
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: "Attendance!A2:F",
+    range: "'Nov 25'!A1:T20000",
   });
 
   const rows = res.data.values ?? [];
+  const dataRows = rows.slice(1);
 
-  const validRows = [];
+  const validRows: z.infer<typeof attendanceSchema>[] = [];
   const errors: string[] = [];
 
-  rows.forEach((row, index) => {
+  dataRows.forEach((row, index) => {
+    const employeeCode = String(row[10] ?? "").trim();
+    const firstName = String(row[12] ?? "").trim();
+    const lastName = String(row[13] ?? "").trim();
+
     const raw = {
-      employeeCode: String(row[0] ?? "").trim(),
-      employeeName: String(row[1] ?? "").trim(),
-      workDate: String(row[2] ?? "").trim(),
-      isPresent: ["true", "1", "yes", "มา", "มาทำงาน"].includes(
-        String(row[3] ?? "").trim().toLowerCase()
-      ),
-      otHours: Number(row[4] ?? 0),
-      note: String(row[5] ?? "").trim(),
+      employeeCode,
+      employeeName: `${firstName} ${lastName}`.trim(),
+      workDate: String(row[4] ?? "").trim(),
+      isPresent: Boolean(employeeCode),
+      otHours:
+        Number(row[14] || 0) +
+        Number(row[15] || 0) +
+        Number(row[16] || 0),
+      note: String(row[19] ?? "").trim(),
     };
 
     const result = attendanceSchema.safeParse(raw);

@@ -1,13 +1,250 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
+}
+
+model categories {
+  id          Int         @id @default(autoincrement())
+  name        String      @unique(map: "name") @db.VarChar(120)
+  description String?     @db.Text
+  created_at  DateTime    @default(now()) @db.Timestamp(0)
+  documents   documents[]
+}
+
+model companies {
+  id           Int      @id @default(autoincrement())
+  company_name String   @db.VarChar(255)
+  created_at   DateTime @default(now()) @db.Timestamp(0)
+}
+
+model documents {
+  id          Int         @id @default(autoincrement())
+  doc_no      String      @unique(map: "doc_no") @db.VarChar(60)
+  title       String      @db.VarChar(255)
+  description String?     @db.Text
+  category_id Int?
+  file_name   String      @db.VarChar(255)
+  file_path   String      @db.VarChar(255)
+  mime_type   String      @db.VarChar(120)
+  file_size   BigInt      @default(0)
+  file_ext    String?     @default("") @db.VarChar(20)
+  uploaded_by Int?
+  downloads   Int?        @default(0)
+  is_starred  Boolean?    @default(false)
+  created_at  DateTime    @default(now()) @db.Timestamp(0)
+  updated_at  DateTime    @default(now()) @db.Timestamp(0)
+  categories  categories? @relation(fields: [category_id], references: [id], onUpdate: NoAction, map: "documents_ibfk_1")
+  users       users?      @relation(fields: [uploaded_by], references: [id], onUpdate: NoAction, map: "documents_ibfk_2")
+
+  @@index([category_id], map: "category_id")
+  @@index([uploaded_by], map: "uploaded_by")
+}
+
+model employee_doc_groups {
+  id                   Int                    @id @default(autoincrement())
+  code                 String                 @unique(map: "code") @db.VarChar(20)
+  title                String                 @db.VarChar(255)
+  employee_doc_items   employee_doc_items[]
+  employee_doc_uploads employee_doc_uploads[]
+}
+
+model employee_doc_items {
+  id                   Int                    @id @default(autoincrement())
+  group_id             Int
+  item_code            String                 @db.VarChar(20)
+  item_title           String                 @db.VarChar(255)
+  sort_order           Int                    @default(0)
+  employee_doc_groups  employee_doc_groups    @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "employee_doc_items_ibfk_1")
+  employee_doc_uploads employee_doc_uploads[]
+
+  @@index([group_id], map: "group_id")
+}
+
+model employee_doc_uploads {
+  id                  Int                 @id @default(autoincrement())
+  user_id             Int?
+  employee_id         Int?
+  group_id            Int
+  item_id             Int
+  is_checked          Boolean             @default(false)
+  file_name           String?             @db.VarChar(255)
+  file_path           String?             @db.VarChar(255)
+  note                String?             @db.Text
+  updated_at          DateTime            @default(now()) @db.Timestamp(0)
+  created_at          DateTime            @default(now()) @db.Timestamp(0)
+  employee_doc_groups employee_doc_groups @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "employee_doc_uploads_ibfk_1")
+  employee_doc_items  employee_doc_items  @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "employee_doc_uploads_ibfk_2")
+
+  @@index([group_id], map: "group_id")
+  @@index([item_id], map: "item_id")
+}
+
+model employee_document_profiles {
+  id                      Int       @id @default(autoincrement())
+  employee_id             Int?
+  company_id              Int?
+  emp_code                String?   @db.VarChar(100)
+  employment_status       String?   @db.VarChar(50)
+  insurance_status        String?   @db.VarChar(50)
+  first_name              String    @default("") @db.VarChar(100)
+  last_name               String    @default("") @db.VarChar(100)
+  first_name_th           String?   @db.VarChar(255)
+  last_name_th            String?   @db.VarChar(255)
+  first_name_en           String?   @db.VarChar(255)
+  last_name_en            String?   @db.VarChar(255)
+  passport_number         String?   @db.VarChar(100)
+  visa_number             String?   @db.VarChar(100)
+  work_permit_number      String?   @db.VarChar(100)
+  ninety_day_number       String?   @db.VarChar(100)
+  passport_file           String?   @db.VarChar(255)
+  passport_expiry_date    DateTime? @db.Date
+  visa_file               String?   @db.VarChar(255)
+  visa_expiry_date        DateTime? @db.Date
+  work_permit_file        String?   @db.VarChar(255)
+  work_permit_expiry_date DateTime? @db.Date
+  ninety_day_file         String?   @db.VarChar(255)
+  ninety_day_report_date  DateTime? @db.Date
+  other_file              String?   @db.VarChar(255)
+  is_document_complete    Boolean?  @default(false)
+  debt_amount             Decimal?  @default(0.00) @db.Decimal(10, 2)
+  created_at              DateTime  @default(now()) @db.Timestamp(0)
+  updated_at              DateTime  @default(now()) @db.Timestamp(0)
+  mou_file                String?   @db.VarChar(255)
+  other_files             String?   @db.Text
+
+  @@index([passport_expiry_date], map: "idx_passport_expiry_date")
+  @@index([visa_expiry_date], map: "idx_visa_expiry_date")
+  @@index([work_permit_expiry_date], map: "idx_work_permit_expiry_date")
+}
+
+model employees {
+  id                  Int      @id @default(autoincrement())
+  emp_code            String?  @db.VarChar(50)
+  first_name          String?  @db.VarChar(150)
+  last_name           String?  @db.VarChar(150)
+  gender              String?  @db.VarChar(20)
+  full_name           String   @db.VarChar(150)
+  nationality         String?  @db.VarChar(100)
+  passport_no         String?  @db.VarChar(100)
+  company_name        String?  @db.VarChar(255)
+  wage_amount         Decimal  @default(0.00) @db.Decimal(12, 2)
+  passport_file       String?  @db.VarChar(255)
+  visa_file           String?  @db.VarChar(255)
+  work_permit_file    String?  @db.VarChar(255)
+  permit_90_file      String?  @db.VarChar(255)
+  mou_resolution_file String?  @db.VarChar(255)
+  other_files         String?  @db.Text
+  note                String?  @db.Text
+  created_at          DateTime @default(now()) @db.Timestamp(0)
+}
+
+model logs {
+  id         Int      @id @default(autoincrement())
+  user_id    Int?
+  action     String   @db.VarChar(120)
+  details    String?  @db.Text
+  ip_address String?  @default("") @db.VarChar(50)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  users      users?   @relation(fields: [user_id], references: [id], onUpdate: NoAction, map: "logs_ibfk_1")
+
+  @@index([user_id], map: "user_id")
+}
+
+model mou_types {
+  id            Int    @id @default(autoincrement())
+  mou_type_name String @db.VarChar(255)
+}
+
+model notifications {
+  id         Int      @id @default(autoincrement())
+  user_id    Int?
+  title      String   @db.VarChar(180)
+  body       String?  @db.Text
+  is_read    Boolean? @default(false)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+  users      users?   @relation(fields: [user_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "notifications_ibfk_1")
+
+  @@index([user_id], map: "user_id")
+}
+
+model password_reset_requests {
+  id         Int      @id @default(autoincrement())
+  email      String   @db.VarChar(150)
+  note       String?  @db.Text
+  status     String?  @default("pending") @db.VarChar(20)
+  created_at DateTime @default(now()) @db.Timestamp(0)
+}
+
+model permit_requests {
+  id             Int       @id @default(autoincrement())
+  user_id        Int?
+  employee_id    Int?
+  group_code     String    @db.VarChar(20)
+  request_no     String?   @db.VarChar(100)
+  tracking_url   String?   @db.Text
+  current_status String?   @db.VarChar(255)
+  submitted_at   DateTime? @db.DateTime(0)
+  checked_at     DateTime? @db.DateTime(0)
+  reviewed_at    DateTime? @db.DateTime(0)
+  approved_at    DateTime? @db.DateTime(0)
+  last_synced_at DateTime? @db.DateTime(0)
+  source_html    String?   @db.LongText
+  created_at     DateTime  @default(now()) @db.Timestamp(0)
+  updated_at     DateTime  @default(now()) @db.Timestamp(0)
+}
+
+model roles {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique(map: "name") @db.VarChar(100)
+  label       String   @db.VarChar(100)
+  permissions String   @db.Text
+  created_at  DateTime @default(now()) @db.Timestamp(0)
+  users       users[]
+}
+
+model users {
+  id               Int             @id @default(autoincrement())
+  role_id          Int?
+  company_id       Int?
+  title_name       String?         @default("") @db.VarChar(100)
+  full_name        String          @db.VarChar(150)
+  username         String          @unique(map: "username") @db.VarChar(80)
+  email            String          @unique(map: "email") @db.VarChar(150)
+  password_hash    String          @db.VarChar(255)
+  is_active        Boolean?        @default(true)
+  can_view         Boolean?        @default(true)
+  can_download     Boolean?        @default(true)
+  can_upload       Boolean?        @default(false)
+  can_edit         Boolean?        @default(false)
+  can_delete       Boolean?        @default(false)
+  can_import       Boolean?        @default(false)
+  can_view_logs    Boolean?        @default(false)
+  can_backup       Boolean?        @default(false)
+  can_restore      Boolean?        @default(false)
+  can_manage_users Boolean?        @default(false)
+  last_login_at    DateTime?       @db.DateTime(0)
+  created_at       DateTime        @default(now()) @db.Timestamp(0)
+  updated_at       DateTime        @default(now()) @db.Timestamp(0)
+  documents        documents[]
+  logs             logs[]
+  notifications    notifications[]
+  roles            roles?          @relation(fields: [role_id], references: [id], onUpdate: NoAction, map: "users_ibfk_1")
+
+  @@index([role_id], map: "role_id")
+}
+
+model attendance_records {
+  id              Int       @id @default(autoincrement())
+  employee_name   String?   @db.VarChar(255)
+  employee_code   String?   @db.VarChar(100)
+  work_date       DateTime? @db.Date
+  is_present      Boolean?  @default(true)
+  ot_hours        Decimal?  @default(0.00) @db.Decimal(10, 2)
+  note            String?   @db.Text
+  source_sheet_id String?   @db.VarChar(255)
+  created_at      DateTime? @default(now()) @db.Timestamp(0)
+  updated_at      DateTime? @default(now()) @db.Timestamp(0)
 }

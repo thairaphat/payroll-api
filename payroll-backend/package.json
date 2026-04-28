@@ -8,11 +8,13 @@
   "dependencies": {
     "@elysiajs/cors": "^1.4.2",
     "@elysiajs/jwt": "^1.4.2",
+    "@prisma/adapter-mariadb": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "elysia": "latest",
     "googleapis": "^171.4.0",
+    "mariadb": "^3.5.2",
     "prisma": "^7.8.0",
     "zod": "^4.3.6"
   },
