@@ -35,30 +35,48 @@ const app = new Elysia()
 
   // ✅ จับ error ทุก route
   .onError(({ code, error, set, request }) => {
-  const url = request.url;
-   const err = error as Error;
-  console.error("❌ API ERROR:", {
-    url,
-    code,
-    message: err.message,
-    stack: err.stack,
-  });
+    const url = request.url;
+    const err = error as Error;
 
-  set.status = 500;
+    console.error("❌ API ERROR:", {
+      url,
+      code,
+      message: err.message,
+    });
 
-  return {
-    ok: false,
-    url,
-    code,
-    message: err.message,
-  };
-})
+    // กำหนด Status Code ตามความเหมาะสม
+    switch (code) {
+      case "NOT_FOUND":
+        set.status = 404;
+        break;
+      case "VALIDATION":
+        set.status = 400;
+        break;
+      case "INTERNAL_SERVER_ERROR":
+        set.status = 500;
+        break;
+      default:
+        // ถ้าเป็น Error ทั่วไปที่เรา throw เอง เช่น "ระบบกำลังซิงค์"
+        set.status = code === "UNKNOWN" && err.message.includes("ซิงค์") ? 423 : 500;
+        break;
+    }
+
+    return {
+      ok: false,
+      url,
+      code,
+      message: err.message,
+    };
+  })
 
   .use(attendanceRoute)
   .use(employeeRoute)
   .use(payrollRoute)
   .use(dashboardRoute);
 
-app.listen(3001);
+app.listen({
+  port: 3001,
+  idleTimeout: 180,
+});
 
 console.log("Server running on http://localhost:3001");

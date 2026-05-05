@@ -1,47 +1,65 @@
 import { prisma } from "../../db";
 
-const DAILY_WAGE = 372;
+const DEFAULT_DAILY_WAGE = 372;
 const WORK_HOURS = 8;
 
 export const getPayrollSummary = async () => {
   const rows = await prisma.$queryRawUnsafe(
     `
     SELECT
-      employee_code,
-      employee_name,
-      branch_code,
-      SUM(is_present) AS work_days,
+      COALESCE(m.emp_code, a.employee_code) AS employee_code,
+      a.employee_name,
+      a.branch_code,
+      SUM(a.is_present) AS work_days,
 
-      SUM(COALESCE(ot1, 0)) AS total_ot1,
-      SUM(COALESCE(ot15, 0)) AS total_ot15,
-      SUM(COALESCE(ot2, 0)) AS total_ot2,
-      SUM(COALESCE(ot_hours, 0)) AS total_ot_hours,
+      SUM(COALESCE(a.ot1, 0)) AS total_ot1,
+      SUM(COALESCE(a.ot15, 0)) AS total_ot15,
+      SUM(COALESCE(a.ot2, 0)) AS total_ot2,
+      SUM(COALESCE(a.ot_hours, 0)) AS total_ot_hours,
 
-      SUM(is_present) * ? AS base_income,
+      -- ใช้ค่าแรงขั้นต่ำคงที่ตามที่กำหนด (372)
+      SUM(a.is_present) * ? AS base_income,
 
-      SUM(COALESCE(ot15, 0)) * (? / ?) * 1.5 AS ot15_income,
-      SUM(COALESCE(ot2, 0)) * (? / ?) * 2 AS ot2_income,
+      SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5 AS ot15_income,
+      SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2 AS ot2_income,
+
+      COALESCE(e.debt_amount, 0) AS deduction_amount,
 
       (
-        SUM(is_present) * ?
-        + SUM(COALESCE(ot15, 0)) * (? / ?) * 1.5
-        + SUM(COALESCE(ot2, 0)) * (? / ?) * 2
-      ) AS total_income
+        SUM(a.is_present) * ?
+        + SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5
+        + SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2
+      ) AS gross_income,
 
-    FROM attendance_records
-    WHERE is_present = 1
-    GROUP BY employee_code, employee_name, branch_code
+      (
+        (
+          SUM(a.is_present) * ?
+          + SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5
+          + SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2
+        ) - COALESCE(e.debt_amount, 0)
+      ) AS net_income
+
+    FROM attendance_records a
+    LEFT JOIN employee_code_mapping m ON a.employee_code = m.sheet_employee_code
+    LEFT JOIN employee_document_profiles e ON COALESCE(m.emp_code, a.employee_code) = e.emp_code
+    WHERE a.is_present = 1
+    GROUP BY COALESCE(m.emp_code, a.employee_code), a.employee_name, a.branch_code, e.debt_amount
     ORDER BY employee_code ASC
     `,
-    DAILY_WAGE,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    WORK_HOURS,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    WORK_HOURS,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS
   );
 
@@ -52,42 +70,59 @@ export const getPayrollByEmployeeCode = async (employeeCode: string) => {
   const rows = await prisma.$queryRawUnsafe(
     `
     SELECT
-      employee_code,
-      employee_name,
-      branch_code,
-      SUM(is_present) AS work_days,
+      COALESCE(m.emp_code, a.employee_code) AS employee_code,
+      a.employee_name,
+      a.branch_code,
+      SUM(a.is_present) AS work_days,
 
-      SUM(COALESCE(ot1, 0)) AS total_ot1,
-      SUM(COALESCE(ot15, 0)) AS total_ot15,
-      SUM(COALESCE(ot2, 0)) AS total_ot2,
-      SUM(COALESCE(ot_hours, 0)) AS total_ot_hours,
+      SUM(COALESCE(a.ot1, 0)) AS total_ot1,
+      SUM(COALESCE(a.ot15, 0)) AS total_ot15,
+      SUM(COALESCE(a.ot2, 0)) AS total_ot2,
+      SUM(COALESCE(a.ot_hours, 0)) AS total_ot_hours,
 
-      SUM(is_present) * ? AS base_income,
+      SUM(a.is_present) * ? AS base_income,
 
-      SUM(COALESCE(ot15, 0)) * (? / ?) * 1.5 AS ot15_income,
-      SUM(COALESCE(ot2, 0)) * (? / ?) * 2 AS ot2_income,
+      SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5 AS ot15_income,
+      SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2 AS ot2_income,
+
+      COALESCE(e.debt_amount, 0) AS deduction_amount,
 
       (
-        SUM(is_present) * ?
-        + SUM(COALESCE(ot15, 0)) * (? / ?) * 1.5
-        + SUM(COALESCE(ot2, 0)) * (? / ?) * 2
-      ) AS total_income
+        SUM(a.is_present) * ?
+        + SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5
+        + SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2
+      ) AS gross_income,
 
-    FROM attendance_records
-    WHERE is_present = 1
-      AND employee_code = ?
-    GROUP BY employee_code, employee_name, branch_code
+      (
+        (
+          SUM(a.is_present) * ?
+          + SUM(COALESCE(a.ot15, 0)) * (? / ?) * 1.5
+          + SUM(COALESCE(a.ot2, 0)) * (? / ?) * 2
+        ) - COALESCE(e.debt_amount, 0)
+      ) AS net_income
+
+    FROM attendance_records a
+    LEFT JOIN employee_code_mapping m ON a.employee_code = m.sheet_employee_code
+    LEFT JOIN employee_document_profiles e ON COALESCE(m.emp_code, a.employee_code) = e.emp_code
+    WHERE a.is_present = 1
+      AND COALESCE(m.emp_code, a.employee_code) = ?
+    GROUP BY COALESCE(m.emp_code, a.employee_code), a.employee_name, a.branch_code, e.debt_amount
     LIMIT 1
     `,
-    DAILY_WAGE,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
-    DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    WORK_HOURS,
+    DEFAULT_DAILY_WAGE,
+    DEFAULT_DAILY_WAGE,
+    WORK_HOURS,
+    DEFAULT_DAILY_WAGE,
     WORK_HOURS,
     employeeCode
   );
