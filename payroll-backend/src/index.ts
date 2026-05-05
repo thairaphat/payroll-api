@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { payrollRoute } from "./modules/payroll/payroll.route";
 import { attendanceRoute } from "./modules/attendance/attendance.route";
+import { fieldAttendanceRoute } from "./modules/attendance/field-attendance.route";
 import { employeeRoute } from "./modules/employees/employee.route";
 import { dashboardRoute } from "./modules/dashboard/dashboard.route";
 import { prisma } from "./db";
@@ -9,7 +10,9 @@ import { prisma } from "./db";
 const app = new Elysia()
   .use(
     cors({
-      origin: "http://localhost:8080",
+      origin: "http://localhost:8081",
+      methods: ["GET", "POST", "PUT", "DELETE"],
+      credentials: true,
     })
   )
 
@@ -70,6 +73,7 @@ const app = new Elysia()
   })
 
   .use(attendanceRoute)
+  .use(fieldAttendanceRoute)
   .use(employeeRoute)
   .use(payrollRoute)
   .use(dashboardRoute);
