@@ -3,6 +3,8 @@ import { prisma } from "../../db";
 export const dashboardRoute = new Elysia().get(
   "/dashboard/summary",
   async () => {
+    const totalEmployeeProfiles = await prisma.employee_document_profiles.count();
+
     const rows = await prisma.$queryRawUnsafe<any[]>(`
       SELECT
         employee_code,
@@ -34,6 +36,7 @@ export const dashboardRoute = new Elysia().get(
     });
 
     return {
+      totalEmployeeProfiles,
       totalEmployees: employees.length,
       totalSalary: employees.reduce((sum, e) => sum + e.totalIncome, 0),
       totalOt: employees.reduce((sum, e) => sum + e.ot, 0),

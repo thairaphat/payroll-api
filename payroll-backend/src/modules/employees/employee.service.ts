@@ -1,6 +1,8 @@
 import { prisma } from "../../db";
 
 export async function getAllEmployees() {
+  // Matched-only employee query for future use
+  /*
   const result = await prisma.$queryRawUnsafe<any[]>(`
     SELECT DISTINCT
       e.id,
@@ -28,13 +30,54 @@ export async function getAllEmployees() {
       AND e.emp_code <> ''
       AND e.emp_code <> '-'
   `);
+  */
 
-  return result.map((row) => ({
-    ...row,
-    id: Number(row.id),
-    company_id: row.company_id == null ? null : Number(row.company_id),
-    debt_amount: row.debt_amount == null ? 0 : Number(row.debt_amount),
-    is_matched: Boolean(Number(row.is_matched)),
+  const [employees, companies, attendanceRecords, mappings] = await Promise.all([
+    prisma.employee_document_profiles.findMany({
+      select: {
+        id: true,
+        emp_code: true,
+        company_id: true,
+        first_name: true,
+        last_name: true,
+        first_name_th: true,
+        last_name_th: true,
+        passport_number: true,
+        employment_status: true,
+        insurance_status: true,
+        debt_amount: true,
+        created_at: true,
+      },
+      orderBy: { id: "desc" },
+    }),
+    prisma.companies.findMany(),
+    prisma.attendance_records.findMany({
+      select: { employee_code: true },
+      distinct: ["employee_code"],
+    }),
+    prisma.employee_code_mapping.findMany(),
+  ]);
+
+  const companyMap = new Map(companies.map((c) => [c.id, c.company_name]));
+  const attendanceCodes = new Set(attendanceRecords.map((a) => a.employee_code));
+
+  // emp_codes that are matched via mapping where sheet_employee_code exists in attendance
+  const mappedMatchedEmpCodes = new Set(
+    mappings
+      .filter((m) => attendanceCodes.has(m.sheet_employee_code))
+      .map((m) => m.emp_code)
+  );
+
+  return employees.map((emp) => ({
+    ...emp,
+    id: Number(emp.id),
+    company_id: emp.company_id == null ? null : Number(emp.company_id),
+    debt_amount: emp.debt_amount == null ? 0 : Number(emp.debt_amount),
+    company_name: companyMap.get(emp.company_id || 0) || "-",
+    is_matched:
+      !!emp.emp_code &&
+      (attendanceCodes.has(emp.emp_code) ||
+        mappedMatchedEmpCodes.has(emp.emp_code)),
   }));
 }
 
