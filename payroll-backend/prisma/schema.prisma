@@ -238,6 +238,32 @@ model users {
   @@index([role_id], map: "role_id")
 }
 
+model payroll_roles {
+  id            Int             @id @default(autoincrement())
+  name          String          @unique(map: "name") @db.VarChar(100)
+  label         String          @db.VarChar(100)
+  permissions   Json?
+  created_at    DateTime        @default(now()) @db.Timestamp(0)
+  updated_at    DateTime        @default(now()) @updatedAt @db.Timestamp(0)
+  payroll_users payroll_users[]
+}
+
+model payroll_users {
+  id             Int           @id @default(autoincrement())
+  role_id        Int
+  username       String        @unique(map: "username") @db.VarChar(80)
+  email          String?       @unique(map: "email") @db.VarChar(150)
+  full_name      String        @db.VarChar(150)
+  password_hash  String        @db.VarChar(255)
+  is_active      Boolean       @default(true)
+  last_login_at  DateTime?     @db.DateTime(0)
+  created_at     DateTime      @default(now()) @db.Timestamp(0)
+  updated_at     DateTime      @default(now()) @updatedAt @db.Timestamp(0)
+  payroll_roles  payroll_roles @relation(fields: [role_id], references: [id], onUpdate: Cascade, map: "fk_payroll_users_role")
+
+  @@index([role_id], map: "idx_payroll_users_role_id")
+}
+
 model attendance_records {
   id               Int      @id @default(autoincrement())
   employee_id      Int?
@@ -266,8 +292,17 @@ model attendance_records {
   source_sheet_id  String   @db.VarChar(255)
   created_at       DateTime @default(now()) @db.Timestamp(0)
   updated_at       DateTime @updatedAt @db.Timestamp(0)
+  approval_status  String   @default("draft") @db.VarChar(20)
+  created_by       Int?
+  approved_by      Int?
+  approved_at      DateTime? @db.DateTime(0)
+  payroll_locked_at DateTime? @db.DateTime(0)
 
   @@unique([source_sheet_id, employee_code, work_date], name: "uniq_attendance")
+  @@index([approval_status], map: "idx_attendance_approval_status")
+  @@index([payroll_locked_at], map: "idx_attendance_payroll_lock")
+  @@index([created_by], map: "idx_attendance_created_by")
+  @@index([approved_by], map: "idx_attendance_approved_by")
 }
 
 model employee_code_mapping {

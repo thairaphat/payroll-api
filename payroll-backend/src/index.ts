@@ -1,32 +1,51 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
+import { jwt } from "@elysiajs/jwt";
 import { payrollRoute } from "./modules/payroll/payroll.route";
 import { attendanceRoute } from "./modules/attendance/attendance.route";
 import { fieldAttendanceRoute } from "./modules/attendance/field-attendance.route";
 import { employeeRoute } from "./modules/employees/employee.route";
 import { dashboardRoute } from "./modules/dashboard/dashboard.route";
+import { authRoute } from "./modules/auth/auth.route";
 import { prisma } from "./db";
 
 const app = new Elysia()
   .use(
     cors({
-      origin: "http://localhost:8081",
-      methods: ["GET", "POST", "PUT", "DELETE"],
+      origin: [
+        "http://localhost:8080",
+        "http://localhost:8081",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:8081",
+      ],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "X-User-Role",
+        "X-User-Id",
+        "X-User-Name",
+      ],
       credentials: true,
     })
   )
+  .use(
+    jwt({
+      name: "jwt",
+      secret: process.env.JWT_SECRET ?? "payroll-local-dev-secret",
+      exp: "8h",
+    })
+  )
 
-  // ✅ route test ว่า backend ยังรัน
   .get("/", () => ({
     ok: true,
     message: "Payroll backend is running",
   }))
 
-  // ✅ route test database
   .get("/test-db", async () => {
     try {
-      const result = await prisma.$queryRawUnsafe("SELECT 1 AS ok");
-      return { ok: true, result };
+      await prisma.$queryRawUnsafe("SELECT 1 AS ok");
+      return { ok: true, result: { ok: 1 } };
     } catch (err) {
       console.error("❌ TEST DB ERROR:", err);
       return {
@@ -36,7 +55,13 @@ const app = new Elysia()
     }
   })
 
-  // ✅ จับ error ทุก route
+  .use(authRoute)
+  .use(attendanceRoute)
+  .use(fieldAttendanceRoute)
+  .use(employeeRoute)
+  .use(payrollRoute)
+  .use(dashboardRoute)
+
   .onError(({ code, error, set, request }) => {
     const url = request.url;
     const err = error as Error;
@@ -47,7 +72,6 @@ const app = new Elysia()
       message: err.message,
     });
 
-    // กำหนด Status Code ตามความเหมาะสม
     switch (code) {
       case "NOT_FOUND":
         set.status = 404;
@@ -59,8 +83,8 @@ const app = new Elysia()
         set.status = 500;
         break;
       default:
-        // ถ้าเป็น Error ทั่วไปที่เรา throw เอง เช่น "ระบบกำลังซิงค์"
-        set.status = code === "UNKNOWN" && err.message.includes("ซิงค์") ? 423 : 500;
+        set.status =
+          code === "UNKNOWN" && err.message.includes("ซิงค์") ? 423 : 500;
         break;
     }
 
@@ -70,13 +94,7 @@ const app = new Elysia()
       code,
       message: err.message,
     };
-  })
-
-  .use(attendanceRoute)
-  .use(fieldAttendanceRoute)
-  .use(employeeRoute)
-  .use(payrollRoute)
-  .use(dashboardRoute);
+  });
 
 app.listen({
   port: 3001,

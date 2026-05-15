@@ -1,5 +1,13 @@
 import { Elysia, t } from "elysia";
 import { prisma } from "../../db";
+import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
+
+const fieldAttendanceAccess = requireRole(["admin", "hr", "field_staff"]);
+const testRecordWhere = [
+  { employee_code: { startsWith: "FIELD_TEST" } },
+  { employee_code: { startsWith: "MVPLOCK" } },
+  { employee_name: "Field Smoke" },
+];
 
 export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance" })
   .get("/", async ({ query }) => {
@@ -10,6 +18,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
       where: {
         work_date: new Date(date as string),
         source_sheet_id: "FIELD_APP",
+        NOT: testRecordWhere,
       },
       orderBy: { id: "asc" },
     });
@@ -20,12 +29,19 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
       work_type_2: (r.raw_row_json as any)?.work_type_2 || "",
       leave_day: !r.is_present
     }));
-  })
-  .post("/bulk", async ({ body }) => {
+  }, { beforeHandle: fieldAttendanceAccess })
+  .post("/bulk", async (context: any) => {
+    const { body, request, jwt, set } = context;
     const { date, records } = body as { date: string; records: any[] };
+    const user = await getAuthUser(request, jwt);
 
     if (!date || !records) {
       throw new Error("Missing date or records");
+    }
+
+    if (!user?.id) {
+      set.status = 401;
+      return { success: false, message: "Authentication required" };
     }
 
     const workDate = new Date(date);
@@ -52,11 +68,50 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
         note: rec.note || null,
         search_text: rec.search_text || null,
         source_sheet_id: "FIELD_APP",
+        approval_status: "draft",
+        created_by: Number(user.id),
         raw_row_json: {
           half_day: rec.half_day || false,
           work_type_2: rec.work_type_2 || "",
         }
       };
+
+      const existing = await prisma.attendance_records.findUnique({
+        where: {
+          uniq_attendance: {
+            source_sheet_id: "FIELD_APP",
+            employee_code: rec.employee_code,
+            work_date: workDate,
+          },
+        },
+        select: {
+          approval_status: true,
+          payroll_locked_at: true,
+          created_by: true,
+        },
+      });
+
+      if (existing?.approval_status === "approved" || existing?.payroll_locked_at) {
+        set.status = 423;
+        return {
+          success: false,
+          message: "Attendance is approved or payroll locked",
+        };
+      }
+
+      if (
+        user.role === "field_staff" &&
+        existing?.created_by &&
+        existing.created_by !== Number(user.id)
+      ) {
+        set.status = 403;
+        return {
+          success: false,
+          message: "Cannot edit attendance created by another user",
+        };
+      }
+
+      const { approval_status, created_by, ...updateData } = data;
 
       await prisma.attendance_records.upsert({
         where: {
@@ -67,12 +122,13 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
           },
         },
         create: data,
-        update: data,
+        update: updateData,
       });
     }
 
     return { success: true, count: records.length };
   }, {
+    beforeHandle: fieldAttendanceAccess,
     body: t.Object({
       date: t.String(),
       records: t.Array(t.Any())

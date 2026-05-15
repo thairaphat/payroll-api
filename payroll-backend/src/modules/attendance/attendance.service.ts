@@ -13,6 +13,13 @@ function safeDate(value: unknown) {
   return new Date();
 }
 
+function isAttendanceLocked(record: {
+  approval_status: string;
+  payroll_locked_at: Date | null;
+}) {
+  return record.approval_status === "approved" || Boolean(record.payroll_locked_at);
+}
+
 export async function syncAttendanceFromSheet({
   sheetId,
 }: {
@@ -34,6 +41,25 @@ export async function syncAttendanceFromSheet({
       try {
         const workDate = safeDate(item.workDate);
         const employeeCode = item.employeeCode || `UNKNOWN-${inserted + updated + skipped + 1}`;
+        const existing = await prisma.attendance_records.findUnique({
+          where: {
+            uniq_attendance: {
+              source_sheet_id: sheetId,
+              employee_code: employeeCode,
+              work_date: workDate,
+            },
+          },
+          select: {
+            approval_status: true,
+            payroll_locked_at: true,
+          },
+        });
+
+        if (existing && isAttendanceLocked(existing)) {
+          skipped++;
+          errors.push(`Skipped locked attendance: ${employeeCode} ${workDate.toISOString().slice(0, 10)}`);
+          continue;
+        }
 
         await prisma.attendance_records.upsert({
           where: {
@@ -74,6 +100,7 @@ export async function syncAttendanceFromSheet({
             raw_row_json: item.rawRowJson ?? null,
 
             source_sheet_id: sheetId,
+            approval_status: "draft",
           },
 
           update: {

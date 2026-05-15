@@ -145,6 +145,18 @@ export async function getUnmappedAttendanceCodes() {
   );
 }
 
+export async function getCompanies() {
+  return await prisma.companies.findMany({
+    select: {
+      id: true,
+      company_name: true,
+    },
+    orderBy: {
+      company_name: "asc",
+    },
+  });
+}
+
 export async function createEmployeeMapping(sheet_employee_code: string, emp_code: string) {
   return await prisma.employee_code_mapping.upsert({
     where: { sheet_employee_code },
