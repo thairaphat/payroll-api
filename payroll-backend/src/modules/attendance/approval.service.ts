@@ -1,4 +1,5 @@
 import { prisma } from "../../db";
+import { APPROVAL_STATUS } from "../../constants/attendance";
 import type { AuthUser } from "../../middlewares/auth.middleware";
 
 type DateRangeInput = {
@@ -40,12 +41,12 @@ export async function submitAttendance(input: DateRangeInput, user: AuthUser) {
   const result = await prisma.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
-      approval_status: "draft",
+      approval_status: APPROVAL_STATUS.DRAFT,
       payroll_locked_at: null,
       ...(user.role === "field_staff" ? { created_by: Number(user.id) } : {}),
     },
     data: {
-      approval_status: "submitted",
+      approval_status: APPROVAL_STATUS.SUBMITTED,
     },
   });
 
@@ -56,11 +57,11 @@ export async function approveAttendance(input: DateRangeInput, user: AuthUser) {
   const result = await prisma.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
-      approval_status: "submitted",
+      approval_status: APPROVAL_STATUS.SUBMITTED,
       payroll_locked_at: null,
     },
     data: {
-      approval_status: "approved",
+      approval_status: APPROVAL_STATUS.APPROVED,
       approved_by: user.id ? Number(user.id) : null,
       approved_at: new Date(),
     },
@@ -73,7 +74,7 @@ export async function lockPayrollPeriod(input: DateRangeInput) {
   const result = await prisma.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
-      approval_status: "approved",
+      approval_status: APPROVAL_STATUS.APPROVED,
       payroll_locked_at: null,
     },
     data: {

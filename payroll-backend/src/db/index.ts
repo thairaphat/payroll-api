@@ -7,8 +7,11 @@ type MariaDbAdapterConfig = Exclude<
   string
 >;
 
-const databaseUrl =
-  process.env.DATABASE_URL ?? "mysql://dev:1234@127.0.0.1:3306/chaiyade_dms";
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error("FATAL: DATABASE_URL environment variable is not set.");
+  process.exit(1);
+}
 const parsedDatabaseUrl = new URL(databaseUrl);
 
 const adapterConfig: MariaDbAdapterConfig = {

@@ -4,7 +4,6 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  
 }
 
 model categories {
@@ -84,7 +83,7 @@ model employee_doc_uploads {
 }
 
 model employee_document_profiles {
-  id                      Int       @id @default(autoincrement())
+  id                      Int                  @id @default(autoincrement())
   employee_id             Int?
   company_id              Int?
   emp_code                String?   @db.VarChar(100)
@@ -109,13 +108,15 @@ model employee_document_profiles {
   ninety_day_file         String?   @db.VarChar(255)
   ninety_day_report_date  DateTime? @db.Date
   other_file              String?   @db.VarChar(255)
-  is_document_complete    Boolean?  @default(false)
-  debt_amount             Decimal?  @default(0.00) @db.Decimal(10, 2)
-  created_at              DateTime  @default(now()) @db.Timestamp(0)
-  updated_at              DateTime  @default(now()) @db.Timestamp(0)
-  mou_file                String?   @db.VarChar(255)
-  other_files             String?   @db.Text
+  is_document_complete    Boolean?             @default(false)
+  debt_amount             Decimal?             @default(0.00) @db.Decimal(10, 2)
+  created_at              DateTime             @default(now()) @db.Timestamp(0)
+  updated_at              DateTime             @default(now()) @db.Timestamp(0)
+  mou_file                String?              @db.VarChar(255)
+  other_files             String?              @db.Text
+  attendance_records      attendance_records[]
 
+  @@index([emp_code], map: "idx_edp_emp_code")
   @@index([passport_expiry_date], map: "idx_passport_expiry_date")
   @@index([visa_expiry_date], map: "idx_visa_expiry_date")
   @@index([work_permit_expiry_date], map: "idx_work_permit_expiry_date")
@@ -132,7 +133,6 @@ model employees {
   passport_no         String?  @db.VarChar(100)
   company_name        String?  @db.VarChar(255)
   wage_amount         Decimal  @default(0.00) @db.Decimal(12, 2)
-  deduction_amount    Decimal  @default(0.00) @db.Decimal(12, 2)
   passport_file       String?  @db.VarChar(255)
   visa_file           String?  @db.VarChar(255)
   work_permit_file    String?  @db.VarChar(255)
@@ -249,56 +249,60 @@ model payroll_roles {
 }
 
 model payroll_users {
-  id             Int           @id @default(autoincrement())
-  role_id        Int
-  username       String        @unique(map: "username") @db.VarChar(80)
-  email          String?       @unique(map: "email") @db.VarChar(150)
-  full_name      String        @db.VarChar(150)
-  password_hash  String        @db.VarChar(255)
-  is_active      Boolean       @default(true)
-  last_login_at  DateTime?     @db.DateTime(0)
-  created_at     DateTime      @default(now()) @db.Timestamp(0)
-  updated_at     DateTime      @default(now()) @updatedAt @db.Timestamp(0)
-  payroll_roles  payroll_roles @relation(fields: [role_id], references: [id], onUpdate: Cascade, map: "fk_payroll_users_role")
+  id            Int           @id @default(autoincrement())
+  role_id       Int
+  username      String        @unique(map: "username") @db.VarChar(80)
+  email         String?       @unique(map: "email") @db.VarChar(150)
+  full_name     String        @db.VarChar(150)
+  password_hash String        @db.VarChar(255)
+  is_active     Boolean       @default(true)
+  last_login_at DateTime?     @db.DateTime(0)
+  created_at    DateTime      @default(now()) @db.Timestamp(0)
+  updated_at    DateTime      @default(now()) @updatedAt @db.Timestamp(0)
+  payroll_roles payroll_roles @relation(fields: [role_id], references: [id], map: "fk_payroll_users_role")
 
   @@index([role_id], map: "idx_payroll_users_role_id")
 }
 
 model attendance_records {
-  id               Int      @id @default(autoincrement())
-  employee_id      Int?
-  raw_date_text    String?  @db.VarChar(50)
-  search_text      String?  @db.VarChar(255)
-  employee_code    String   @db.VarChar(100)
-  employee_code_13 String?  @db.VarChar(100)
-  employee_name    String   @db.VarChar(255)
-  first_name       String?  @db.VarChar(150)
-  last_name        String?  @db.VarChar(150)
-  work_date        DateTime @db.Date
-  start_time       String?  @db.VarChar(20)
-  shift_name       String?  @db.VarChar(255)
-  branch_code      String?  @db.VarChar(50)
-  formula_col_1    String?  @db.VarChar(255)
-  formula_col_2    String?  @db.VarChar(255)
-  status_code      String?  @db.VarChar(50)
-  work_time        String?  @db.VarChar(50)
-  is_present       Boolean  @default(true)
-  ot1              Decimal  @default(0.00) @db.Decimal(10, 2)
-  ot15             Decimal  @default(0.00) @db.Decimal(10, 2)
-  ot2              Decimal  @default(0.00) @db.Decimal(10, 2)
-  ot_hours         Decimal  @default(0.00) @db.Decimal(10, 2)
-  note             String?  @db.Text
-  raw_row_json     Json?
-  source_sheet_id  String   @db.VarChar(255)
-  created_at       DateTime @default(now()) @db.Timestamp(0)
-  updated_at       DateTime @updatedAt @db.Timestamp(0)
-  approval_status  String   @default("draft") @db.VarChar(20)
-  created_by       Int?
-  approved_by      Int?
-  approved_at      DateTime? @db.DateTime(0)
+  id                                 Int                          @id @default(autoincrement())
+  employee_id                        Int?
+  employee_document_profiles         employee_document_profiles?  @relation(fields: [employee_id], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "fk_attendance_employee_id")
+  raw_date_text                      String?                      @db.VarChar(50)
+  search_text       String?   @db.VarChar(255)
+  employee_code     String    @db.VarChar(100)
+  employee_code_13  String?   @db.VarChar(100)
+  employee_name     String    @db.VarChar(255)
+  first_name        String?   @db.VarChar(150)
+  last_name         String?   @db.VarChar(150)
+  work_date         DateTime  @db.Date
+  start_time        String?   @db.VarChar(20)
+  shift_name        String?   @db.VarChar(255)
+  branch_code       String?   @db.VarChar(50)
+  formula_col_1     String?   @db.VarChar(255)
+  formula_col_2     String?   @db.VarChar(255)
+  status_code       String?   @db.VarChar(50)
+  work_time         String?   @db.VarChar(50)
+  is_present        Boolean   @default(true)
+  ot1               Decimal   @default(0.00) @db.Decimal(10, 2)
+  ot15              Decimal   @default(0.00) @db.Decimal(10, 2)
+  ot2               Decimal   @default(0.00) @db.Decimal(10, 2)
+  ot_hours          Decimal   @default(0.00) @db.Decimal(10, 2)
+  note              String?   @db.Text
+  raw_row_json      Json?
+  source_sheet_id   String    @db.VarChar(255)
+  created_at        DateTime  @default(now()) @db.Timestamp(0)
+  updated_at        DateTime  @updatedAt @db.Timestamp(0)
+  approval_status   String    @default("draft") @db.VarChar(20)
+  created_by        Int?
+  approved_by       Int?
+  approved_at       DateTime? @db.DateTime(0)
   payroll_locked_at DateTime? @db.DateTime(0)
 
   @@unique([source_sheet_id, employee_code, work_date], name: "uniq_attendance")
+  @@index([employee_id], map: "idx_attendance_employee_id")
+  @@index([work_date], map: "idx_attendance_work_date")
+  @@index([employee_code], map: "idx_attendance_employee_code")
   @@index([approval_status], map: "idx_attendance_approval_status")
   @@index([payroll_locked_at], map: "idx_attendance_payroll_lock")
   @@index([created_by], map: "idx_attendance_created_by")
@@ -307,7 +311,9 @@ model attendance_records {
 
 model employee_code_mapping {
   id                  Int      @id @default(autoincrement())
-  sheet_employee_code String   @unique @db.VarChar(100)
+  sheet_employee_code String   @unique(map: "uniq_sheet_employee_code") @db.VarChar(100)
   emp_code            String   @db.VarChar(100)
   created_at          DateTime @default(now()) @db.Timestamp(0)
+
+  @@index([emp_code], map: "idx_emp_code")
 }

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\ADMIN\\\\payroll-api\\\\payroll-backend\\\\src\\\\modules\" -Recurse -File | ForEach-Object { $_.FullName })",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\ADMIN\\\\payroll-api\\\\payroll-backend\\\\src\" -Recurse -File | Where-Object { $_.Name -notmatch \"node_modules\" } | ForEach-Object { Write-Host $_.FullName })",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\ADMIN\\\\payroll-api\" -Recurse -File | Where-Object { $_.FullName -notmatch \"node_modules|\\\\.git|dist|build|\\\\.next\" } | Select-Object FullName, Length, LastWriteTime | Sort-Object FullName)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\ADMIN\\\\payroll-api\" -Recurse -File | Where-Object { $_.FullName -notmatch \"node_modules|\\\\.git|dist|build|\\\\.next|\\\\.prisma|generated\" } | ForEach-Object { $_.FullName.Replace\\(\"C:\\\\Users\\\\ADMIN\\\\payroll-api\\\\\", \"\"\\) } | Sort-Object)",
+      "PowerShell($env:PATH = $env:PATH + \";C:\\\\Program Files\\\\Git\\\\bin;C:\\\\Program Files\\\\Git\\\\cmd\"; cd \"C:\\\\Users\\\\ADMIN\\\\payroll-api\"; git ls-files payroll-backend/.env; Write-Host \"---git-log---\"; git log --oneline -5)",
+      "PowerShell(Get-Command *)",
+      "PowerShell(Get-ChildItem \"C:\\\\Users\\\\ADMIN\\\\payroll-api\" -Recurse -Depth 2 -Directory -ErrorAction SilentlyContinue | Where-Object { $_.FullName -notmatch \"node_modules\" } | Select-Object -ExpandProperty FullName | Sort-Object)"
+    ]
+  }
+}

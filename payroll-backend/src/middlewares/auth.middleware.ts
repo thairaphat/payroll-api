@@ -28,8 +28,8 @@ function getBearerToken(header: string | null) {
   return token || null;
 }
 
-function isDevMode() {
-  return process.env.NODE_ENV !== "production";
+function isDevBypassEnabled() {
+  return process.env.ALLOW_DEV_AUTH_BYPASS === "true";
 }
 
 export async function getAuthUser(
@@ -52,7 +52,7 @@ export async function getAuthUser(
     }
   }
 
-  if (!isDevMode()) return null;
+  if (!isDevBypassEnabled()) return null;
 
   const headerRole = request.headers.get("x-user-role");
   const role = normalizeRole(headerRole);

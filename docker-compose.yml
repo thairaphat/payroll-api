@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+
+  # ── MariaDB ──────────────────────────────────────────────────────────────────
+  mariadb:
+    image: mariadb:11
+    container_name: payroll-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE}
+      MARIADB_USER: ${MARIADB_USER}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    volumes:
+      - mariadb-data:/var/lib/mysql
+      - ./mariadb/init:/docker-entrypoint-initdb.d:ro
+      - ./logs/mariadb:/var/log/mysql
+    networks:
+      - payroll-net
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Bun Backend + PM2 ────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./payroll-backend
+      dockerfile: Dockerfile
+    container_name: payroll-backend
+    restart: unless-stopped
+    env_file: .env.production
+    volumes:
+      - ./logs/backend:/app/logs
+    networks:
+      - payroll-net
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  # ── React Frontend (Nginx static) ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./payroll-companion
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_GOOGLE_SHEET_ID: ${VITE_GOOGLE_SHEET_ID}
+    container_name: payroll-frontend
+    restart: unless-stopped
+    networks:
+      - payroll-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx (reverse proxy + SSL) ───────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: payroll-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - payroll-net
+    depends_on:
+      - backend
+      - frontend
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # ── Certbot (SSL cert renewal) ────────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: payroll-certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    profiles:
+      - certbot
+
+volumes:
+  mariadb-data:
+    name: payroll-mariadb-data
+
+networks:
+  payroll-net:
+    name: payroll-network
+    driver: bridge

@@ -1,13 +1,13 @@
 import { Elysia, t } from "elysia";
 import { prisma } from "../../db";
 import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
+import {
+  APPROVAL_STATUS,
+  FIELD_APP_SHEET_ID,
+  TEST_RECORD_WHERE,
+} from "../../constants/attendance";
 
 const fieldAttendanceAccess = requireRole(["admin", "hr", "field_staff"]);
-const testRecordWhere = [
-  { employee_code: { startsWith: "FIELD_TEST" } },
-  { employee_code: { startsWith: "MVPLOCK" } },
-  { employee_name: "Field Smoke" },
-];
 
 export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance" })
   .get("/", async ({ query }) => {
@@ -17,8 +17,8 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
     const records = await prisma.attendance_records.findMany({
       where: {
         work_date: new Date(date as string),
-        source_sheet_id: "FIELD_APP",
-        NOT: testRecordWhere,
+        source_sheet_id: FIELD_APP_SHEET_ID,
+        NOT: TEST_RECORD_WHERE,
       },
       orderBy: { id: "asc" },
     });
@@ -67,8 +67,8 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
         ot_hours: Number(rec.ot1 || 0) + Number(rec.ot15 || 0) + Number(rec.ot2 || 0),
         note: rec.note || null,
         search_text: rec.search_text || null,
-        source_sheet_id: "FIELD_APP",
-        approval_status: "draft",
+        source_sheet_id: FIELD_APP_SHEET_ID,
+        approval_status: APPROVAL_STATUS.DRAFT,
         created_by: Number(user.id),
         raw_row_json: {
           half_day: rec.half_day || false,
@@ -79,7 +79,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
       const existing = await prisma.attendance_records.findUnique({
         where: {
           uniq_attendance: {
-            source_sheet_id: "FIELD_APP",
+            source_sheet_id: FIELD_APP_SHEET_ID,
             employee_code: rec.employee_code,
             work_date: workDate,
           },
@@ -91,7 +91,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
         },
       });
 
-      if (existing?.approval_status === "approved" || existing?.payroll_locked_at) {
+      if (existing?.approval_status === APPROVAL_STATUS.APPROVED || existing?.payroll_locked_at) {
         set.status = 423;
         return {
           success: false,
@@ -116,7 +116,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
       await prisma.attendance_records.upsert({
         where: {
           uniq_attendance: {
-            source_sheet_id: "FIELD_APP",
+            source_sheet_id: FIELD_APP_SHEET_ID,
             employee_code: rec.employee_code,
             work_date: workDate,
           },

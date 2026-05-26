@@ -108,6 +108,40 @@ function toNumber(value: unknown) {
   return Number.isFinite(n) ? n : 0;
 }
 
+const MONTH_ABBR: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+const SHEET_NAME_PATTERN = /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{2})$/i;
+
+async function detectLatestSheet(
+  sheets: ReturnType<typeof google.sheets>,
+  spreadsheetId: string
+): Promise<string> {
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId,
+    fields: "sheets.properties.title",
+  });
+
+  const titles: string[] = (meta.data.sheets ?? [])
+    .map((s: any) => s.properties?.title ?? "")
+    .filter(Boolean);
+
+  const dated = titles
+    .map((t) => {
+      const m = t.match(SHEET_NAME_PATTERN);
+      if (!m) return null;
+      return {
+        title: t,
+        date: new Date(2000 + parseInt(m[2], 10), MONTH_ABBR[m[1].toLowerCase()], 1),
+      };
+    })
+    .filter((x): x is { title: string; date: Date } => x !== null)
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+
+  return dated.length > 0 ? dated[0].title : (titles[0] ?? "Sheet1");
+}
+
 export async function readAttendanceFromGoogleSheet(sheetId: string) {
   const credentials = getGoogleCredentials();
 
@@ -118,9 +152,11 @@ export async function readAttendanceFromGoogleSheet(sheetId: string) {
 
   const sheets = google.sheets({ version: "v4", auth });
 
+  const sheetName = await detectLatestSheet(sheets, sheetId);
+
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: "'Nov 25'!A1:T20000",
+    range: `'${sheetName}'!A1:T20000`,
   });
 
   const rows = res.data.values ?? [];

@@ -9,15 +9,21 @@ import { dashboardRoute } from "./modules/dashboard/dashboard.route";
 import { authRoute } from "./modules/auth/auth.route";
 import { prisma } from "./db";
 
+// Fail fast if JWT_SECRET is missing or insecure — prevents silent token forgery
+const _jwtSecret = process.env.JWT_SECRET;
+if (!_jwtSecret || _jwtSecret === "payroll-local-dev-secret") {
+  console.error("FATAL: JWT_SECRET is not set or is using the insecure default value.");
+  console.error("Add a strong JWT_SECRET to your .env file and restart the server.");
+  console.error("Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64'))\"");
+  process.exit(1);
+}
+
 const app = new Elysia()
   .use(
     cors({
-      origin: [
-        "http://localhost:8080",
-        "http://localhost:8081",
-        "http://127.0.0.1:8080",
-        "http://127.0.0.1:8081",
-      ],
+      origin: (process.env.ALLOWED_ORIGINS ?? "http://localhost:8080,http://localhost:8081,http://127.0.0.1:8080,http://127.0.0.1:8081")
+        .split(",")
+        .map((o) => o.trim()),
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: [
         "Content-Type",
@@ -32,7 +38,7 @@ const app = new Elysia()
   .use(
     jwt({
       name: "jwt",
-      secret: process.env.JWT_SECRET ?? "payroll-local-dev-secret",
+      secret: process.env.JWT_SECRET!,
       exp: "8h",
     })
   )
@@ -44,7 +50,7 @@ const app = new Elysia()
 
   .get("/test-db", async () => {
     try {
-      await prisma.$queryRawUnsafe("SELECT 1 AS ok");
+      await prisma.$queryRaw`SELECT 1 AS ok`;
       return { ok: true, result: { ok: 1 } };
     } catch (err) {
       console.error("❌ TEST DB ERROR:", err);

@@ -1,8 +1,17 @@
 import { Elysia, t } from "elysia";
+import { Prisma } from "@prisma/client";
 import { syncAttendanceFromSheet } from "./attendance.controller";
 import { prisma } from "../../db";
 import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
 import { approveAttendance, submitAttendance } from "./approval.service";
+import {
+  TEST_CODE_PREFIX_FIELD,
+  TEST_CODE_PREFIX_MVP,
+  TEST_EMPLOYEE_NAME,
+  TEST_RECORD_WHERE,
+} from "../../constants/attendance";
+
+const MONTH_PATTERN = /^\d{4}-\d{2}$/;
 
 const attendanceScopeBody = t.Object({
   date: t.Optional(t.String()),
@@ -12,11 +21,6 @@ const attendanceScopeBody = t.Object({
 });
 
 const attendanceListRoles = ["admin", "hr", "accounting", "field_staff"] as const;
-const testRecordWhere = [
-  { employee_code: { startsWith: "FIELD_TEST" } },
-  { employee_code: { startsWith: "MVPLOCK" } },
-  { employee_name: "Field Smoke" },
-];
 
 async function requireAttendanceListRole({ request, set, jwt }: any) {
   const user = await getAuthUser(request, jwt);
@@ -59,7 +63,7 @@ function buildAttendanceListWhere(query: Record<string, string | undefined>) {
       ? { approval_status: approvalStatus }
       : {}),
     ...(approvalStatus === "locked" ? { payroll_locked_at: { not: null } } : {}),
-    ...(includeTest ? {} : { NOT: testRecordWhere }),
+    ...(includeTest ? {} : { NOT: TEST_RECORD_WHERE }),
   };
 }
 
@@ -81,42 +85,50 @@ export const attendanceRoute = new Elysia()
       }, { beforeHandle: requireRole(["admin", "hr"]) })
 
       .get("/attendance", async ({ query }: any) => {
-        return await prisma.attendance_records.findMany({
-          where: buildAttendanceListWhere(query ?? {}),
-          orderBy: [
-            { work_date: "desc" },
-            { id: "desc" },
-          ],
-          take: 10000,
-        });
+        const q = query ?? {};
+        const page = Math.max(1, parseInt(q.page ?? "1", 10) || 1);
+        const pageSize = Math.min(2000, Math.max(1, parseInt(q.pageSize ?? "1000", 10) || 1000));
+        const skip = (page - 1) * pageSize;
+        const where = buildAttendanceListWhere(q);
+
+        const [data, total] = await Promise.all([
+          prisma.attendance_records.findMany({
+            where,
+            orderBy: [{ work_date: "desc" }, { id: "desc" }],
+            skip,
+            take: pageSize,
+          }),
+          prisma.attendance_records.count({ where }),
+        ]);
+
+        return { ok: true, data, total, page, pageSize };
       }, { beforeHandle: requireAttendanceListRole })
 
       .get("/available-months", async () => {
-        const rows = await prisma.$queryRawUnsafe<any[]>(
-          `SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m') as month
-           FROM attendance_records
-           WHERE employee_code NOT LIKE 'FIELD_TEST%'
-             AND employee_code NOT LIKE 'MVPLOCK%'
-             AND employee_name <> 'Field Smoke'
-           ORDER BY month DESC`
-        );
+        const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+          SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m') AS month
+          FROM attendance_records
+          WHERE employee_code NOT LIKE ${TEST_CODE_PREFIX_FIELD}
+            AND employee_code NOT LIKE ${TEST_CODE_PREFIX_MVP}
+            AND employee_name <> ${TEST_EMPLOYEE_NAME}
+          ORDER BY month DESC
+        `);
         return rows.map(r => r.month);
       }, { beforeHandle: requireAttendanceListRole })
 
       .get("/available-dates", async ({ query }: any) => {
         const month = query.month; // Expected format: YYYY-MM
-        if (!month) return [];
+        if (!month || !MONTH_PATTERN.test(month)) return [];
 
-        const rows = await prisma.$queryRawUnsafe<any[]>(
-          `SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m-%d') as date
-           FROM attendance_records
-           WHERE DATE_FORMAT(work_date, '%Y-%m') = ?
-             AND employee_code NOT LIKE 'FIELD_TEST%'
-             AND employee_code NOT LIKE 'MVPLOCK%'
-             AND employee_name <> 'Field Smoke'
-           ORDER BY date DESC`,
-          month
-        );
+        const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+          SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m-%d') AS date
+          FROM attendance_records
+          WHERE DATE_FORMAT(work_date, '%Y-%m') = ${month}
+            AND employee_code NOT LIKE ${TEST_CODE_PREFIX_FIELD}
+            AND employee_code NOT LIKE ${TEST_CODE_PREFIX_MVP}
+            AND employee_name <> ${TEST_EMPLOYEE_NAME}
+          ORDER BY date DESC
+        `);
         return rows.map(r => r.date);
       }, { beforeHandle: requireAttendanceListRole })
   )
