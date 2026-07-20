@@ -322,6 +322,27 @@ model employee_code_mapping {
   @@index([emp_code], map: "idx_emp_code")
 }
 
+// Employee master mapping — นำเข้าจาก Google Sheet (master ของพนักงาน)
+// แยกจาก employee_code_mapping (ที่ payroll/dashboard JOIN อยู่) เพื่อไม่ปน concern
+// dedup/upsert ด้วย (source_sheet_id + code_to_find); code_to_find = main matching key
+model employee_master_mapping {
+  id                Int      @id @default(autoincrement())
+  employee_code     String?  @db.VarChar(100) // Column A (canonical) — อาจว่าง
+  first_name        String?  @db.VarChar(150) // Column B
+  last_name         String?  @db.VarChar(150) // Column C
+  employee_name     String?  @db.VarChar(255) // B + " " + C
+  code_to_find      String   @db.VarChar(255) // Column D — main matching key
+  source_sheet_id   String   @db.VarChar(255)
+  source_sheet_name String?  @db.VarChar(100)
+  raw_row_json      Json?
+  created_at        DateTime @default(now()) @db.Timestamp(0)
+  updated_at        DateTime @default(now()) @updatedAt @db.Timestamp(0)
+
+  @@unique([source_sheet_id, code_to_find], name: "uniq_master_mapping")
+  @@index([employee_code], map: "idx_emm_employee_code")
+  @@index([code_to_find], map: "idx_emm_code_to_find")
+}
+
 model payroll_wage_config {
   id             Int      @id @default(autoincrement())
   description    String?  @db.VarChar(255)

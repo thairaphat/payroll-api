@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Plus, Search, Users, Loader2, Save } from "lucide-react";
+import { Plus, Search, Users, Loader2, Save, RefreshCw } from "lucide-react";
 
 import { useState } from "react";
 import { formatTHB } from "@/services/payroll.service";
@@ -12,6 +12,7 @@ import {
   fetchEmployees,
   getCompanies,
   addManualEmployee,
+  syncEmployeeMaster,
 } from "@/services/employee.service";
 import { toast } from "sonner";
 import {
@@ -42,9 +43,15 @@ type Employee = {
   debt_amount: number | string | null;
 };
 
+// Google Sheet "employee master" — แยกจากชีต attendance โดยสิ้นเชิง
+const MASTER_SHEET_ID = "1fhFqtkcdpGdnKGeP_JhpPv2P5EaWvptrK9Hjdc1qP0";
+
 export default function Employees() {
   const queryClient = useQueryClient();
   const [q, setQ] = useState("");
+
+  // --- Employee Master Sync State ---
+  const [syncingMaster, setSyncingMaster] = useState(false);
 
   // --- Add Employee State ---
   const [addOpen, setAddOpen] = useState(false);
@@ -82,6 +89,26 @@ export default function Employees() {
 
   const totalDebt = employees.reduce((acc, emp) => acc + Number(emp.debt_amount || 0), 0);
   const statusCount = new Set(employees.map((e) => e.employment_status).filter(Boolean)).size;
+
+  const handleSyncMaster = async () => {
+    try {
+      setSyncingMaster(true);
+      const res = await syncEmployeeMaster(MASTER_SHEET_ID);
+      toast.success(
+        `ซิงค์รายชื่อสำเร็จ — เพิ่ม ${res.inserted} | อัปเดต ${res.updated} | ข้าม ${res.skipped}`
+      );
+      if (res.errors && res.errors.length > 0) {
+        const preview = res.errors.slice(0, 3).join(" • ");
+        toast.warning(
+          `มี ${res.errors.length} แถวถูกข้าม: ${preview}${res.errors.length > 3 ? " …" : ""}`
+        );
+      }
+    } catch (error: any) {
+      toast.error(error.message || "ซิงค์รายชื่อพนักงานไม่สำเร็จ");
+    } finally {
+      setSyncingMaster(false);
+    }
+  };
 
   const handleAddSubmit = async () => {
     if (!empCode || !firstName || !lastName) {
@@ -148,14 +175,38 @@ export default function Employees() {
             </div>
           </div>
 
-          <Button
-            onClick={() => setAddOpen(true)}
-            size="lg"
-            className="rounded-2xl bg-[#2563eb] hover:bg-[#1e40af] text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 w-full sm:w-auto"
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            เพิ่มพนักงาน
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            {/* Sync Employee Master — นำเข้ารายชื่อจาก Google Sheet (แยกจาก Attendance Sync) */}
+            <Button
+              onClick={handleSyncMaster}
+              disabled={syncingMaster}
+              size="lg"
+              variant="outline"
+              title="ซิงค์รายชื่อพนักงานจาก Google Sheet"
+              className="rounded-2xl border-[#2563eb] text-[#1e40af] hover:bg-[#eef4ff] shadow-sm transition-all duration-300 w-full sm:w-auto"
+            >
+              {syncingMaster ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <RefreshCw className="h-4 w-4 mr-2" />
+              )}
+              <span className="flex flex-col items-start leading-tight text-left">
+                <span className="font-semibold">Sync Employee Master</span>
+                <span className="text-[10px] opacity-80">
+                  ซิงค์รายชื่อพนักงานจาก Google Sheet
+                </span>
+              </span>
+            </Button>
+
+            <Button
+              onClick={() => setAddOpen(true)}
+              size="lg"
+              className="rounded-2xl bg-[#2563eb] hover:bg-[#1e40af] text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 w-full sm:w-auto"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              เพิ่มพนักงาน
+            </Button>
+          </div>
         </header>
 
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">

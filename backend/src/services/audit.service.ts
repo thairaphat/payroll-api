@@ -6,15 +6,21 @@ export type AuditAction =
   | "attendance.submit"
   | "attendance.approve"
   | "payroll.lock"
-  | "employee.auto_created";
+  | "employee.auto_created"
+  | "employee_master.import";
 
-export type AuditEntityType = "attendance_period" | "payroll_period" | "employee";
+export type AuditEntityType =
+  | "attendance_period"
+  | "payroll_period"
+  | "employee"
+  | "employee_master_mapping";
 
 export interface AuditScope {
   date?: string;
   startDate?: string;
   endDate?: string;
   sourceSheetId?: string;
+  sourceSheetName?: string;
 }
 
 /**

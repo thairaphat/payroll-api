@@ -49,7 +49,7 @@ function num(value: unknown) {
 /**
  * Converts all BigInt values in a flat raw-SQL result row to number.
  *
- * prisma.$queryRaw returns aggregate columns (SUM, ANY_VALUE on INT columns, etc.)
+ * prisma.$queryRaw returns aggregate columns (SUM, MAX on INT columns, etc.)
  * as JavaScript BigInt on the MySQL/MariaDB driver.  BigInt is not JSON-serializable,
  * so every raw row must pass through this before being spread into a response object.
  *
@@ -183,10 +183,12 @@ function buildPayrollSql(
 
   return Prisma.sql`
     SELECT
-      -- ANY_VALUE satisfies ONLY_FULL_GROUP_BY for all joined/non-GROUP-BY columns.
-      -- Both m.emp_code (UNIQUE JOIN) and a.employee_code are wrapped — MySQL requires
-      -- any column not directly listed as a GROUP BY key to be in an aggregate.
-      COALESCE(ANY_VALUE(m.emp_code), ANY_VALUE(a.employee_code)) AS employee_code,
+      -- MAX() satisfies ONLY_FULL_GROUP_BY for all joined/non-GROUP-BY columns.
+      -- MariaDB 11 has no ANY_VALUE(); MAX() returns a single deterministic value
+      -- per group and works on the 1:1 joined rows here. Both m.emp_code
+      -- (UNIQUE JOIN) and a.employee_code are wrapped — any column not directly
+      -- listed as a GROUP BY key must be inside an aggregate.
+      COALESCE(MAX(m.emp_code), MAX(a.employee_code)) AS employee_code,
 
       -- Name fallback chain (DB level):
       --   1. a.employee_name if not blank  (a.employee_name is a GROUP BY key — raw OK)
@@ -196,17 +198,17 @@ function buildPayrollSql(
       --   5. emp_code / employee_code as last resort
       COALESCE(
         NULLIF(TRIM(a.employee_name), ''),
-        NULLIF(TRIM(CONCAT(COALESCE(ANY_VALUE(e.first_name_th), ''), ' ', COALESCE(ANY_VALUE(e.last_name_th), ''))), ''),
-        NULLIF(TRIM(CONCAT(COALESCE(ANY_VALUE(e.first_name_en), ''), ' ', COALESCE(ANY_VALUE(e.last_name_en), ''))), ''),
-        NULLIF(TRIM(CONCAT(ANY_VALUE(e.first_name), ' ', ANY_VALUE(e.last_name))), ''),
-        COALESCE(ANY_VALUE(m.emp_code), ANY_VALUE(a.employee_code))
+        NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_th), ''), ' ', COALESCE(MAX(e.last_name_th), ''))), ''),
+        NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_en), ''), ' ', COALESCE(MAX(e.last_name_en), ''))), ''),
+        NULLIF(TRIM(CONCAT(MAX(e.first_name), ' ', MAX(e.last_name))), ''),
+        COALESCE(MAX(m.emp_code), MAX(a.employee_code))
       )                                      AS employee_name,
 
       a.branch_code                          AS branch_code,
 
       -- company_id is resolved via the profile join; used in JS to pick the
       -- correct wage config for this employee.
-      ANY_VALUE(e.company_id)                AS company_id,
+      MAX(e.company_id)                      AS company_id,
 
       SUM(a.is_present)                      AS work_days,
       SUM(COALESCE(a.ot1,  0))               AS total_ot1,
@@ -215,7 +217,7 @@ function buildPayrollSql(
       SUM(COALESCE(a.ot_hours, 0))           AS total_ot_hours,
 
       -- deduction_amount from profile; income fields are computed in JS
-      COALESCE(ANY_VALUE(e.debt_amount), 0)  AS deduction_amount
+      COALESCE(MAX(e.debt_amount), 0)        AS deduction_amount
 
     FROM attendance_records a
     LEFT JOIN employee_code_mapping m ON a.employee_code = m.sheet_employee_code

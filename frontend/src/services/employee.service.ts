@@ -54,3 +54,32 @@ export async function saveMapping(sheet_employee_code: string, emp_code: string)
   if (!res.ok) throw new Error("บันทึกการ Mapping ไม่สำเร็จ");
   return res.json();
 }
+
+export interface MasterImportResult {
+  inserted: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+}
+
+/**
+ * ซิงค์ employee master จาก Google Sheet → ตาราง employee_master_mapping (เท่านั้น)
+ * ไม่เกี่ยวกับ attendance / payroll / employee_document_profiles
+ */
+export async function syncEmployeeMaster(
+  sheetId: string
+): Promise<MasterImportResult> {
+  const res = await authFetch(`${API_URL}/employees/import-master`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sheetId }),
+  });
+
+  const json = await res.json().catch(() => null);
+  if (!res.ok || json?.status === "error") {
+    throw new Error(json?.message ?? "ซิงค์รายชื่อพนักงานไม่สำเร็จ");
+  }
+
+  // backend คืน { status: "success", data: { inserted, updated, skipped, errors } }
+  return (json?.data ?? json) as MasterImportResult;
+}

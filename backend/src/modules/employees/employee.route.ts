@@ -9,6 +9,7 @@ import {
 } from "./employee.controller";
 import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
 import { getCompanyScope } from "../../services/company-scope.service";
+import { importEmployeeMasterFromSheet } from "../../services/employee-master-import.service";
 
 const employeesAccess = requireRole(["admin", "hr"]);
 
@@ -113,5 +114,27 @@ export const employeeRoute = new Elysia({ prefix: "/employees" })
       };
     }
   }, { beforeHandle: employeesAccess })
-  
+
+  // นำเข้า employee master จาก Google Sheet → employee_master_mapping เท่านั้น
+  .post("/import-master", async ({ body, request, jwt, set }: any) => {
+    try {
+      const user = await getAuthUser(request, jwt);
+      const { sheetId } = (body ?? {}) as { sheetId?: string };
+      if (!sheetId) {
+        set.status = 400;
+        return { status: "error", message: "Missing sheetId" };
+      }
+      return {
+        status: "success",
+        data: await importEmployeeMasterFromSheet({ sheetId, user }),
+      };
+    } catch (error) {
+      return {
+        status: "error",
+        message:
+          error instanceof Error ? error.message : "นำเข้า employee master ไม่สำเร็จ",
+      };
+    }
+  }, { beforeHandle: employeesAccess })
+
   ;

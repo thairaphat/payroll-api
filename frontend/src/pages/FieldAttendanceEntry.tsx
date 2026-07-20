@@ -88,7 +88,7 @@ export default function FieldAttendanceEntry() {
     try {
       setLoading(true);
       const data = await getFieldAttendance(date);
-      setRecords(data);
+      setRecords(normalizeRecords(data));
     } catch (error) {
       toast.error("โหลดข้อมูลไม่สำเร็จ");
     } finally {
@@ -96,23 +96,58 @@ export default function FieldAttendanceEntry() {
     }
   };
 
-  const createRecordObject = (emp: any) => ({
-    employee_code: emp.emp_code || emp.employee_code,
-    employee_code_13: emp.employee_code_13 || "",
-    first_name: emp.first_name,
-    last_name: emp.last_name,
-    employee_name: `${emp.first_name} ${emp.last_name}`,
-    branch_code: emp.branch_code || "",
-    start_time: "08:00",
-    work_time: "08:00-17:00",
-    ot1: 0,
-    ot15: 0,
-    ot2: 0,
-    half_day: false,
-    leave_day: false,
-    work_type_2: "",
-    note: ""
+  // Safe string coercion — guards against null/undefined fields from incomplete DB records.
+  const safeStr = (v: any): string => (v === null || v === undefined ? "" : String(v));
+
+  const createRecordObject = (emp: any) => {
+    const employeeCode = safeStr(emp?.emp_code) || safeStr(emp?.employee_code);
+    const firstName = safeStr(emp?.first_name);
+    const lastName = safeStr(emp?.last_name);
+
+    return {
+      employee_code: employeeCode,
+      employee_code_13: safeStr(emp?.employee_code_13),
+      first_name: firstName,
+      last_name: lastName,
+      employee_name: `${firstName} ${lastName}`.trim(),
+      branch_code: safeStr(emp?.branch_code),
+      start_time: "08:00",
+      work_time: "08:00-17:00",
+      ot1: 0,
+      ot15: 0,
+      ot2: 0,
+      half_day: false,
+      leave_day: false,
+      work_type_2: "",
+      note: ""
+    };
+  };
+
+  // Normalize records arriving from the API/DB so every string/number/boolean field
+  // is guaranteed safe — prevents undefined.slice() crashes and controlled-input warnings.
+  const normalizeRecord = (r: any) => ({
+    ...r,
+    employee_code: safeStr(r?.employee_code) || safeStr(r?.emp_code),
+    employee_code_13: safeStr(r?.employee_code_13),
+    first_name: safeStr(r?.first_name),
+    last_name: safeStr(r?.last_name),
+    employee_name:
+      safeStr(r?.employee_name) ||
+      `${safeStr(r?.first_name)} ${safeStr(r?.last_name)}`.trim(),
+    branch_code: safeStr(r?.branch_code),
+    start_time: safeStr(r?.start_time) || "08:00",
+    work_time: safeStr(r?.work_time) || "08:00-17:00",
+    work_type_2: safeStr(r?.work_type_2),
+    note: safeStr(r?.note),
+    ot1: Number(r?.ot1 ?? 0) || 0,
+    ot15: Number(r?.ot15 ?? 0) || 0,
+    ot2: Number(r?.ot2 ?? 0) || 0,
+    half_day: Boolean(r?.half_day),
+    leave_day: Boolean(r?.leave_day),
   });
+
+  const normalizeRecords = (data: any): any[] =>
+    Array.isArray(data) ? data.map(normalizeRecord) : [];
 
   const handleAddEmployee = (emp: any) => {
     if (records.find(r => r.employee_code === (emp.emp_code || emp.employee_code))) {
@@ -198,8 +233,8 @@ export default function FieldAttendanceEntry() {
       toast.promise(getFieldAttendance(prevDate), {
         loading: "กำลังดึงข้อมูลวันก่อนหน้า...",
         success: (data) => {
-          if (data.length === 0) return "ไม่พบข้อมูลวันก่อนหน้า";
-          setRecords(data.map((r: any) => ({ ...r, id: undefined, work_date: date })));
+          if (!Array.isArray(data) || data.length === 0) return "ไม่พบข้อมูลวันก่อนหน้า";
+          setRecords(normalizeRecords(data).map((r: any) => ({ ...r, id: undefined, work_date: date })));
           return `คัดลอกข้อมูลจากวันที่ ${prevDate} สำเร็จ`;
         },
         error: "โหลดข้อมูลล้มเหลว"
@@ -393,7 +428,7 @@ export default function FieldAttendanceEntry() {
                           <td className="py-4 px-6">
                             <div className="flex items-center gap-3">
                               <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center font-bold text-xs shadow-sm", row.leave_day ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600")}>
-                                {row.employee_code.slice(-3)}
+                                {String(row?.employee_code ?? "").slice(-3) || "—"}
                               </div>
                               <div className="max-w-[200px]">
                                 <p className="font-black text-slate-800 truncate leading-none mb-1 text-sm">{row.employee_name}</p>
@@ -475,7 +510,7 @@ export default function FieldAttendanceEntry() {
                    <div className="flex justify-between items-start mb-4">
                      <div className="flex items-center gap-3">
                        <div className="h-12 w-12 rounded-2xl bg-white shadow-sm border border-slate-100 flex items-center justify-center font-black text-slate-400">
-                         {row.employee_code.slice(-3)}
+                         {String(row?.employee_code ?? "").slice(-3) || "—"}
                        </div>
                        <div>
                          <p className="font-black text-slate-900">{row.employee_name}</p>

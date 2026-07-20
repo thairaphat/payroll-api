@@ -229,3 +229,80 @@ dataRows.forEach((row, index) => {
     errors,
   };
 }
+
+// ─── Employee master sheet reader (สำหรับ employee_master_mapping เท่านั้น) ────
+// ไม่เกี่ยวกับ attendance — ไม่มี work_date / OT / presence
+
+export interface EmployeeMasterRow {
+  employeeCode: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  employeeName: string | null;
+  codeToFind: string | null;
+  rawRowJson: Record<string, unknown>;
+}
+
+/**
+ * อ่าน employee master sheet (4 คอลัมน์):
+ *   A = employee_code (รหัสพนักงาน)   B = first_name (ชื่อ)
+ *   C = last_name (นามสกุล)           D = code_to_find (Code to find) = main matching key
+ */
+export async function readEmployeeMasterFromGoogleSheet(sheetId: string) {
+  const credentials = getGoogleCredentials();
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
+  });
+  const sheets = google.sheets({ version: "v4", auth });
+  const sheetName = await detectLatestSheet(sheets, sheetId);
+
+  const res = await sheets.spreadsheets.values.get({
+    spreadsheetId: sheetId,
+    range: `'${sheetName}'!A1:D20000`,
+  });
+  const rows = res.data.values ?? [];
+  if (rows.length === 0) {
+    return { rows: [] as EmployeeMasterRow[], errors: ["ไม่มีข้อมูลในชีต"], sheetName };
+  }
+
+  const dataRows = rows.slice(1);
+  const validRows: EmployeeMasterRow[] = [];
+  const errors: string[] = [];
+
+  dataRows.forEach((row, index) => {
+    const rawCode = cleanText(row[0]);    // A = employee_code
+    const firstName = cleanText(row[1]);  // B = ชื่อ
+    const lastName = cleanText(row[2]);   // C = นามสกุล
+    const codeToFind = cleanText(row[3]); // D = Code to find
+
+    // ข้ามแถวที่ไม่มีข้อมูลให้ระบุตัวตนเลย
+    if (!rawCode && !firstName && !lastName && !codeToFind) {
+      return;
+    }
+
+    // normalize Column A: uppercase + ตัดช่องว่าง (เช่น "CYDW 0031" → "CYDW0031"); ว่าง/#N/A → null
+    const employeeCode =
+      rawCode && rawCode !== "#N/A"
+        ? rawCode.toUpperCase().replace(/\s+/g, "")
+        : null;
+    const employeeName = `${firstName ?? ""} ${lastName ?? ""}`.trim() || null;
+
+    validRows.push({
+      employeeCode,
+      firstName,
+      lastName,
+      employeeName,
+      codeToFind, // เก็บเต็ม — main matching key
+      rawRowJson: {
+        employee_code: rawCode ?? null,
+        first_name: firstName,
+        last_name: lastName,
+        code_to_find: codeToFind,
+        row_number: index + 2,
+        sheet_name: sheetName,
+      },
+    });
+  });
+
+  return { rows: validRows, errors, sheetName };
+}
