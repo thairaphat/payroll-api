@@ -28,10 +28,12 @@ describe("empty company scope", () => {
   });
 
   it("does not lock or snapshot an empty payroll result", async () => {
-    const source = await readRepoFile("backend/src/modules/payroll/payroll.route.ts");
-    const emptyGuard = source.indexOf("if (payrollRows.length === 0)");
-    const lockCall = source.indexOf("lockPayrollPeriod(input, lockCompanyId)");
-    const snapshotCall = source.indexOf("prisma.payroll_snapshots.createMany");
+    const source = await readRepoFile(
+      "backend/src/modules/payroll/payroll-lock.service.ts"
+    );
+    const emptyGuard = source.indexOf("if (rows.length === 0)");
+    const lockCall = source.indexOf("dependencies.lockAttendance(");
+    const snapshotCall = source.indexOf("tx.payroll_snapshots.createMany");
     expect(emptyGuard).toBeGreaterThan(-1);
     expect(lockCall).toBeGreaterThan(emptyGuard);
     expect(snapshotCall).toBeGreaterThan(lockCall);
@@ -110,7 +112,9 @@ describe("CYD administrator isolation", () => {
     const payroll = await readRepoFile("backend/src/modules/payroll/payroll.route.ts");
     const fieldAttendance = await readRepoFile("backend/src/modules/attendance/field-attendance.route.ts");
     expect(payroll).toContain('requireRole(["admin", "accounting"])');
-    expect(fieldAttendance).toContain('requireRole(["admin", "hr", "field_staff"])');
+    expect(fieldAttendance).toMatch(
+      /fieldAttendanceWriteAccess\s*=\s*requireRole\(\s*\[\s*"admin",\s*"hr",\s*"field_staff",?\s*\]\s*\)/
+    );
   });
 
   it("audits cross-company reads without credential data", async () => {

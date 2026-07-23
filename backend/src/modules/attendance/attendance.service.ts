@@ -152,8 +152,8 @@ export async function syncAttendanceFromSheet({
         });
         inserted = result.count;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors.push(`Batch insert error: ${message}`);
+        console.error("[attendance.sync] Batch insert failed");
+        errors.push("Batch insert failed");
       }
     }
 
@@ -168,8 +168,12 @@ export async function syncAttendanceFromSheet({
         );
         updated += chunk.length;
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        errors.push(`Batch update error (chunk ${Math.floor(i / UPDATE_CHUNK_SIZE) + 1}): ${message}`);
+        console.error(
+          `[attendance.sync] Batch update failed at chunk ${Math.floor(i / UPDATE_CHUNK_SIZE) + 1}`
+        );
+        errors.push(
+          `Batch update failed at chunk ${Math.floor(i / UPDATE_CHUNK_SIZE) + 1}`
+        );
       }
     }
 

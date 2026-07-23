@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../db";
 import { APPROVAL_STATUS } from "../../constants/attendance";
 import type { AuthUser } from "../../middlewares/auth.middleware";
@@ -10,6 +11,11 @@ type DateRangeInput = {
   endDate?: string;
   sourceSheetId?: string;
 };
+
+type AttendanceLockClient = Pick<
+  Prisma.TransactionClient,
+  "attendance_records" | "employee_document_profiles"
+>;
 
 function toDate(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
@@ -86,14 +92,17 @@ export async function approveAttendance(input: DateRangeInput, user: AuthUser, c
   return { success: true, updated: result.count };
 }
 
-export async function lockPayrollPeriod(input: DateRangeInput, companyId?: number | null) {
-  let codeFilter: { in: string[] } | undefined;
-  if (companyId != null) {
-    const codes = await getCompanyEmployeeCodes(companyId);
-    codeFilter = { in: codes };
-  }
+export async function lockPayrollPeriod(
+  input: DateRangeInput,
+  companyId: number,
+  db: AttendanceLockClient = prisma,
+  companyCodes?: string[]
+) {
+  const codes =
+    companyCodes ?? (await getCompanyEmployeeCodes(companyId, db));
+  const codeFilter = { in: codes };
 
-  const result = await prisma.attendance_records.updateMany({
+  const result = await db.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
       ...(codeFilter ? { employee_code: codeFilter } : {}),

@@ -1,8 +1,10 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import type { AuthUser } from "../middlewares/auth.middleware";
 
 export type AuditAction =
   | "attendance.sync"
+  | "attendance.bulk"
   | "attendance.submit"
   | "attendance.approve"
   | "payroll.lock"
@@ -44,6 +46,8 @@ export interface AuditScope {
   requestId?: string;
 }
 
+type AuditClient = Pick<Prisma.TransactionClient, "payroll_audit_logs">;
+
 /**
  * Writes a structured audit entry to payroll_audit_logs.
  *
@@ -66,8 +70,10 @@ export async function logAudit(
         actor_username: user?.username ?? null,
         actor_role: user?.role ?? null,
         entity_type: entityType,
-        entity_scope: scope as any,
-        metadata: (metadata ?? null) as any,
+        entity_scope: scope as Prisma.InputJsonValue,
+        metadata: metadata
+          ? (metadata as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       },
     });
   } catch (err) {
@@ -84,17 +90,20 @@ export async function logRequiredAudit(
   entityType: AuditEntityType,
   scope: AuditScope,
   user: AuthUser | null,
-  metadata?: Record<string, unknown>
+  metadata?: Record<string, unknown>,
+  db: AuditClient = prisma
 ): Promise<void> {
-  await prisma.payroll_audit_logs.create({
+  await db.payroll_audit_logs.create({
     data: {
       action,
       actor_user_id: user?.id ? Number(user.id) : null,
       actor_username: user?.username ?? null,
       actor_role: user?.role ?? null,
       entity_type: entityType,
-      entity_scope: scope as any,
-      metadata: (metadata ?? null) as any,
+      entity_scope: scope as Prisma.InputJsonValue,
+      metadata: metadata
+        ? (metadata as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
     },
   });
 }

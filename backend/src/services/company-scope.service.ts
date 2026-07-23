@@ -10,6 +10,11 @@ import { logRequiredAudit } from "./audit.service";
  */
 export type CompanyScope = number | null | "deny";
 
+type CompanyEmployeeQueryClient = Pick<
+  Prisma.TransactionClient,
+  "employee_document_profiles"
+>;
+
 export class CompanyScopeError extends Error {
   constructor(message: string, public readonly status: 400 | 403 | 404) {
     super(message);
@@ -73,17 +78,20 @@ export function getCompanyScope(user: AuthUser): CompanyScope {
  * Returns an empty array if the company has no employees — callers should
  * treat this as "nothing accessible" rather than "all records".
  */
-export async function getCompanyEmployeeCodes(companyId: number): Promise<string[]> {
+export async function getCompanyEmployeeCodes(
+  companyId: number,
+  db: CompanyEmployeeQueryClient = prisma
+): Promise<string[]> {
   // Profiles are the sole employee source of truth. Until attendance has its
   // own company_id, duplicate codes are excluded because ownership is ambiguous.
-  const profiles = await prisma.employee_document_profiles.findMany({
+  const profiles = await db.employee_document_profiles.findMany({
     where: { company_id: companyId, emp_code: { not: null } },
     select: { emp_code: true },
   });
   const companyCodes = [...new Set(profiles.map((p) => p.emp_code).filter((c): c is string => Boolean(c)))];
   if (companyCodes.length === 0) return [];
 
-  const matchingProfiles = await prisma.employee_document_profiles.findMany({
+  const matchingProfiles = await db.employee_document_profiles.findMany({
     where: { emp_code: { in: companyCodes }, company_id: { not: null } },
     select: { emp_code: true, company_id: true },
   });

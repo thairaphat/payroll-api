@@ -104,6 +104,21 @@ describe("company-scoped payroll wage lookup", () => {
 });
 
 describe("payroll calculation", () => {
+  it("calculates the 360-baht company scenario through the real implementation", () => {
+    const result = applyWageToRow(
+      { work_days: 20, total_ot1: 2, total_ot15: 2, total_ot2: 3 },
+      wage({
+        company_id: 16,
+        daily_wage: new Prisma.Decimal("360"),
+      })
+    );
+    expect(result.base_income).toBe(7200);
+    expect(result.ot1_income).toBe(90);
+    expect(result.ot15_income).toBe(135);
+    expect(result.ot2_income).toBe(270);
+    expect(result.gross_income).toBe(7695);
+  });
+
   it("uses company daily wage and configured OT1/OT1.5/OT2 multipliers", () => {
     const result = applyWageToRow(
       { work_days: 2, total_ot1: 1, total_ot15: 2, total_ot2: 3 },

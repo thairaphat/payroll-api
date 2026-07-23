@@ -27,6 +27,22 @@ export type PayrollDateRange = {
   endDate: string;
 };
 
+type PayrollLiveClient = Pick<
+  Prisma.TransactionClient,
+  "$queryRaw" | "employee_document_profiles"
+>;
+
+export function buildPayrollLockKey(
+  companyId: number,
+  range: PayrollDateRange
+) {
+  return `${companyId}_${range.startDate}_${range.endDate}`;
+}
+
+export function buildLegacyPayrollLockKey(range: PayrollDateRange) {
+  return `${range.startDate}_${range.endDate}`;
+}
+
 function validateDateRange(range: PayrollDateRange) {
   if (!DATE_PATTERN.test(range.startDate) || !DATE_PATTERN.test(range.endDate)) {
     throw new Error("Invalid date format. Expected YYYY-MM-DD.");
@@ -300,10 +316,13 @@ export const getPayrollSummary = async (
 
   // Serve from immutable snapshot if the period has been locked.
   if (!includeDraft) {
-    const lockKey = `${range.startDate}_${range.endDate}`;
+    const lockKeys = [
+      buildPayrollLockKey(companyId, range),
+      buildLegacyPayrollLockKey(range),
+    ];
 
     // Apply company scope to snapshot lookup when user is company-scoped
-    const snapshotWhere: any = { lock_key: lockKey };
+    const snapshotWhere: any = { lock_key: { in: lockKeys } };
     snapshotWhere.employee_code = { in: companyCodes };
 
     const snapshots = await prisma.payroll_snapshots.findMany({
@@ -315,7 +334,7 @@ export const getPayrollSummary = async (
       console.info(
         "[payroll] Serving %d rows from locked snapshot (lock_key=%s)",
         snapshots.length,
-        lockKey
+        lockKeys[0]
       );
       return snapshots.map(formatSnapshotAsPayrollRow);
     }
@@ -353,10 +372,16 @@ export const getPayrollByEmployeeCode = async (
   if (!companyCodes.includes(employeeCode)) return null;
 
   if (!includeDraft) {
-    const lockKey = `${range.startDate}_${range.endDate}`;
+    const lockKeys = [
+      buildPayrollLockKey(companyId, range),
+      buildLegacyPayrollLockKey(range),
+    ];
     // For scoped users: verify the requested employee belongs to their company
     const snap = await prisma.payroll_snapshots.findFirst({
-      where: { lock_key: lockKey, employee_code: employeeCode },
+      where: {
+        lock_key: { in: lockKeys },
+        employee_code: employeeCode,
+      },
     });
     if (snap) {
       return formatSnapshotAsPayrollRow(snap);
@@ -380,11 +405,18 @@ export const getPayrollByEmployeeCode = async (
  * Each returned row includes daily_wage_used / work_hours_used so the snapshot
  * records the exact per-company rate applied — not a single global rate.
  */
-export const getPayrollSummaryLive = async (range: PayrollDateRange, companyId: number) => {
+export const getPayrollSummaryLive = async (
+  range: PayrollDateRange,
+  companyId: number,
+  db: PayrollLiveClient = prisma,
+  configuredWage?: WageConfig
+) => {
   validateDateRange(range);
-  const wage = await getActiveWageConfig(companyId);
-  const companyCodes = await getCompanyEmployeeCodes(companyId);
+  const wage = configuredWage ?? (await getActiveWageConfig(companyId, db));
+  const companyCodes = await getCompanyEmployeeCodes(companyId, db);
   if (companyCodes.length === 0) return [];
-  const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, false, undefined, companyId, companyCodes));
+  const rows = await db.$queryRaw<any[]>(
+    buildPayrollSql(range, false, undefined, companyId, companyCodes)
+  );
   return enrichRows(rows, wage);
 };

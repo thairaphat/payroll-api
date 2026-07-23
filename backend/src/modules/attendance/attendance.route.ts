@@ -81,13 +81,7 @@ export const attendanceRoute = new Elysia()
             user ?? undefined
           );
         } catch (error) {
-          return {
-            status: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : "Sync Google Sheet failed",
-          };
+          throw error;
         }
       }, { beforeHandle: requireRole(["admin", "hr"]) })
 
@@ -247,11 +241,7 @@ export const attendanceRoute = new Elysia()
       }
       return await submitAttendance(body as any, user, scope);
     } catch (error) {
-      set.status = 400;
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : "Submit attendance failed",
-      };
+      throw error;
     }
   }, {
     beforeHandle: requireRole(["admin", "hr", "field_staff"]),
@@ -275,11 +265,7 @@ export const attendanceRoute = new Elysia()
       }
       return await approveAttendance(body as any, user, scope);
     } catch (error) {
-      set.status = 400;
-      return {
-        success: false,
-        message: error instanceof Error ? error.message : "Approve attendance failed",
-      };
+      throw error;
     }
   }, {
     beforeHandle: requireRole(["admin", "hr"]),
