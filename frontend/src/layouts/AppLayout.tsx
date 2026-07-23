@@ -24,6 +24,7 @@ const ROLE_LABELS: Record<string, string> = {
   accounting: "Accounting",
   field_staff: "Field Staff",
   viewer: "Viewer",
+  cyd_admin: "CYD Administrator",
 };
 
 type NavItem = {
@@ -41,21 +42,23 @@ type NavSection = {
 const NAV_SECTIONS: NavSection[] = [
   {
     items: [
-      { to: "/dashboard", label: "หน้าหลัก", icon: Home, roles: ["admin", "viewer"] },
+      { to: "/admin/companies", label: "ภาพรวมทุกบริษัท", icon: Home, roles: ["cyd_admin"] },
+      { to: "/dashboard", label: "หน้าหลัก", icon: Home, roles: ["cyd_admin", "admin", "viewer"] },
     ],
   },
   {
     section: "OPERATIONS",
     items: [
       { to: "/field-attendance", label: "บันทึกเข้าออกงาน", icon: MapPin, roles: ["admin", "field_staff"] },
-      { to: "/payroll", label: "เงินเดือน", icon: Banknote, roles: ["admin", "accounting"] },
-      { to: "/attendance", label: "ประวัติการบันทึกเข้าออกงาน", icon: CalendarRange, roles: ["admin", "hr"] },
+      { to: "/payroll", label: "เงินเดือน", icon: Banknote, roles: ["cyd_admin", "admin", "accounting"] },
+      { to: "/attendance", label: "ประวัติการบันทึกเข้าออกงาน", icon: CalendarRange, roles: ["cyd_admin", "admin", "hr"] },
     ],
   },
   {
     section: "ADMIN",
     items: [
-      { to: "/employees", label: "พนักงาน", icon: UsersRound, roles: ["admin", "hr"] },
+      { to: "/admin/users", label: "จัดการผู้ใช้งาน", icon: UsersRound, roles: ["cyd_admin"] },
+      { to: "/employees", label: "พนักงาน", icon: UsersRound, roles: ["cyd_admin", "admin", "hr"] },
     ],
   },
 ];

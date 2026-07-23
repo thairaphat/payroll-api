@@ -3,31 +3,30 @@ import {
   listEmployees,
   listEmployeesByCompany,
   listCompanies,
-  listUnmappedAttendance,
-  createMapping,
   createManualEmployee,
 } from "./employee.controller";
 import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
-import { getCompanyScope } from "../../services/company-scope.service";
-import { importEmployeeMasterFromSheet } from "../../services/employee-master-import.service";
+import { CompanyScopeError, resolveCompanyScope } from "../../services/company-scope.service";
+import { logRequiredAudit } from "../../services/audit.service";
 
-const employeesAccess = requireRole(["admin", "hr"]);
+const employeesAccess = requireRole(["cyd_admin", "admin", "hr"]);
 
 export const employeeRoute = new Elysia({ prefix: "/employees" })
 
-  .get("/", async ({ request, jwt, set }: any) => {
+  .get("/", async ({ request, jwt, set, query }: any) => {
     try {
       const user = await getAuthUser(request, jwt);
-      const scope = user ? getCompanyScope(user) : "deny";
-      if (scope === "deny") {
-        set.status = 403;
-        return { status: "error", message: "No company assigned to your account. Contact your administrator." };
-      }
+      if (!user) { set.status = 401; return { status: "error", message: "Authentication required" }; }
+      const scope = await resolveCompanyScope(user, query?.companyId, {
+        endpoint: "/employees", method: "GET",
+        requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+      });
       return {
         status: "success",
-        data: await listEmployees(scope !== null ? scope : undefined),
+        data: await listEmployees(scope),
       };
     } catch (error) {
+      if (error instanceof CompanyScopeError) set.status = error.status;
       return {
         status: "error",
         message:
@@ -38,11 +37,20 @@ export const employeeRoute = new Elysia({ prefix: "/employees" })
     }
   }, { beforeHandle: employeesAccess })
 
-  .get("/companies", async () => {
+  .get("/companies", async ({ request, jwt, set }: any) => {
     try {
+      const user = await getAuthUser(request, jwt);
+      if (!user) { set.status = 401; return { ok: false, message: "Authentication required" }; }
+      if (user.role === "cyd_admin") {
+        await logRequiredAudit("company.scope.view", "company", {
+          endpoint: "/employees/companies",
+          method: "GET",
+          requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+        }, user);
+      }
       return {
         ok: true,
-        data: await listCompanies(),
+        data: await listCompanies(user.role === "cyd_admin" ? undefined : await resolveCompanyScope(user)),
       };
     } catch (error) {
       return {
@@ -55,13 +63,20 @@ export const employeeRoute = new Elysia({ prefix: "/employees" })
     }
   }, { beforeHandle: employeesAccess })
 
-  .get("/company/:id", async ({ params }) => {
+  .get("/company/:id", async ({ params, request, jwt, set }: any) => {
     try {
+      const user = await getAuthUser(request, jwt);
+      if (!user) { set.status = 401; return { status: "error", message: "Authentication required" }; }
+      const scope = await resolveCompanyScope(user, params.id, {
+        endpoint: "/employees/company/:id", method: "GET",
+        requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+      });
       return {
         status: "success",
-        data: await listEmployeesByCompany(params.id),
+        data: await listEmployeesByCompany(String(scope)),
       };
     } catch (error) {
+      if (error instanceof CompanyScopeError) set.status = error.status;
       return {
         status: "error",
         message:
@@ -72,33 +87,18 @@ export const employeeRoute = new Elysia({ prefix: "/employees" })
     }
   }, { beforeHandle: employeesAccess })
 
-  .get("/unmapped", async () => {
-    try {
-      return {
-        status: "success",
-        data: await listUnmappedAttendance(),
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        message: error instanceof Error ? error.message : "โหลดข้อมูล Attendance ที่ยังไม่ได้ Map ไม่สำเร็จ",
-      };
-    }
-  }, { beforeHandle: employeesAccess })
+  .get("/unmapped", ({ set }) => {
+    set.status = 410;
+    return {
+      status: "deprecated",
+      message: "Unmapped attendance is disabled until attendance_records has company_id.",
+    };
+  }, { beforeHandle: requireRole(["cyd_admin", "admin", "hr"]) })
 
-  .post("/mapping", async ({ body }) => {
-    try {
-      return {
-        status: "success",
-        data: await createMapping(body as any),
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        message: error instanceof Error ? error.message : "สร้าง Mapping ไม่สำเร็จ",
-      };
-    }
-  }, { beforeHandle: employeesAccess })
+  .post("/mapping", ({ set }) => {
+    set.status = 410;
+    return { status: "deprecated", message: "employee_code_mapping is no longer supported." };
+  }, { beforeHandle: requireRole(["admin", "hr"]) })
 
   .post("/manual", async ({ body, set }) => {
     try {
@@ -115,26 +115,9 @@ export const employeeRoute = new Elysia({ prefix: "/employees" })
     }
   }, { beforeHandle: employeesAccess })
 
-  // นำเข้า employee master จาก Google Sheet → employee_master_mapping เท่านั้น
-  .post("/import-master", async ({ body, request, jwt, set }: any) => {
-    try {
-      const user = await getAuthUser(request, jwt);
-      const { sheetId } = (body ?? {}) as { sheetId?: string };
-      if (!sheetId) {
-        set.status = 400;
-        return { status: "error", message: "Missing sheetId" };
-      }
-      return {
-        status: "success",
-        data: await importEmployeeMasterFromSheet({ sheetId, user }),
-      };
-    } catch (error) {
-      return {
-        status: "error",
-        message:
-          error instanceof Error ? error.message : "นำเข้า employee master ไม่สำเร็จ",
-      };
-    }
-  }, { beforeHandle: employeesAccess })
+  .post("/import-master", ({ set }) => {
+    set.status = 410;
+    return { status: "deprecated", message: "Google Sheets are attendance-only; employee master import is disabled." };
+  }, { beforeHandle: requireRole(["admin", "hr"]) })
 
   ;

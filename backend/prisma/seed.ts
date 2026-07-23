@@ -3,22 +3,22 @@ import bcrypt from "bcryptjs";
 import { PrismaClient } from "@prisma/client";
 import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 
+import { CANONICAL_ROLES, type CanonicalRole } from "../src/utils/user-policy";
+import {
+  findMissingCompanyIds,
+  formatSeedUserLog,
+  resolveSeedConfiguration,
+  shouldHashSeedPassword,
+  type SeedUserConfig,
+} from "./seed-config";
+
 const databaseUrl = process.env.DATABASE_URL;
-
 if (!databaseUrl) {
-  console.error("FATAL: DATABASE_URL not set");
-  process.exit(1);
-}
-
-const companyId = Number(process.env.PAYROLL_COMPANY_ID);
-
-if (!Number.isInteger(companyId) || companyId <= 0) {
-  console.error("FATAL: PAYROLL_COMPANY_ID is missing or invalid");
+  console.error("[seed][failure] DATABASE_URL is not set");
   process.exit(1);
 }
 
 const parsed = new URL(databaseUrl);
-
 const adapter = new PrismaMariaDb({
   host: parsed.hostname || "127.0.0.1",
   port: parsed.port ? Number(parsed.port) : 3306,
@@ -27,131 +27,138 @@ const adapter = new PrismaMariaDb({
   database: parsed.pathname.replace(/^\//, ""),
   connectionLimit: 5,
 });
-
 const prisma = new PrismaClient({ adapter });
 
-const ROLES = [
-  { name: "admin", label: "Administrator" },
-  { name: "hr", label: "HR Staff" },
-  { name: "accounting", label: "Accounting" },
-  { name: "field_staff", label: "Field Staff" },
-  { name: "viewer", label: "Viewer" },
-];
-
-const TEST_USERS = [
-  {
-    username: "admindynamic",
-    email: "admindynamic@payroll.local",
-    full_name: "Admin Dynamic",
-    password: "123456",
-    role_name: "admin",
-    company_id: 25,
-  },
-];
+const ROLE_LABELS: Record<CanonicalRole, string> = {
+  cyd_admin: "CYD Administrator",
+  admin: "Administrator",
+  hr: "HR Staff",
+  accounting: "Accounting",
+  field_staff: "Field Staff",
+  viewer: "Viewer",
+};
 
 async function main() {
-  const company = await prisma.companies.findUnique({
-    where: { id: companyId },
+  const config = resolveSeedConfiguration(process.env);
+  const configuredUsers = [config.cydAdmin, ...config.companyUsers];
+
+  if (config.usedDevelopmentDefaults) {
+    console.warn("[seed][warning] Development default credentials are being used.");
+    console.warn("Change all passwords before deployment.");
+  }
+
+  const companyIds = [...new Set(config.companyUsers.map((user) => user.companyId as number))];
+  const companies = await prisma.companies.findMany({
+    where: { id: { in: companyIds } },
+    select: { id: true },
+  });
+  const missingCompanyIds = findMissingCompanyIds(companyIds, companies.map((company) => company.id));
+  if (missingCompanyIds.length) {
+    throw new Error(`Configured company ID not found: ${missingCompanyIds.join(", ")}`);
+  }
+
+  const existingUsers = await prisma.payroll_users.findMany({
+    where: {
+      OR: [
+        { username: { in: configuredUsers.map((user) => user.username) } },
+        { email: { in: configuredUsers.map((user) => user.email) } },
+      ],
+    },
+    include: { payroll_roles: true },
   });
 
-  if (!company) {
-    throw new Error(
-      `Company id=${companyId} does not exist in the current database`
-    );
+  const prepared: Array<{
+    user: SeedUserConfig;
+    existing: (typeof existingUsers)[number] | null;
+    passwordHash?: string;
+  }> = [];
+  for (const user of configuredUsers) {
+    const byUsername = existingUsers.find((row) => row.username.toLowerCase() === user.username.toLowerCase());
+    const byEmail = existingUsers.find((row) => row.email?.toLowerCase() === user.email.toLowerCase());
+    if (byUsername && byEmail && byUsername.id !== byEmail.id) {
+      throw new Error(`Username/email conflict for configured user ${user.username}`);
+    }
+    if (!byUsername && byEmail) {
+      throw new Error(`Email conflict for configured user ${user.username}`);
+    }
+    const existing = byUsername ?? byEmail ?? null;
+    if (existing && existing.company_id !== user.companyId) {
+      throw new Error(`Company assignment conflict for existing user ${user.username}`);
+    }
+    if (existing?.payroll_roles.name === "cyd_admin" && user.role !== "cyd_admin") {
+      throw new Error(`Company configuration cannot modify a cyd_admin account: ${user.username}`);
+    }
+    if (!existing && !user.password) {
+      throw new Error(`Password is required when creating configured user ${user.username}`);
+    }
+    if (existing && user.updatePassword && !user.password) {
+      throw new Error(`Password is required when updatePassword is enabled for ${user.username}`);
+    }
+    const shouldHashPassword = shouldHashSeedPassword(Boolean(existing), user);
+    prepared.push({
+      user,
+      existing,
+      passwordHash: shouldHashPassword && user.password
+        ? await bcrypt.hash(user.password, 12)
+        : undefined,
+    });
   }
 
-  console.log(
-    `🏢 Using company: ${company.company_name} (id=${company.id})`
-  );
-
-  console.log("🌱 Seeding payroll_roles...");
-
-  const roleMap = new Map<string, number>();
-
-  for (const role of ROLES) {
-    const existing = await prisma.payroll_roles.findFirst({
-      where: { name: role.name },
+  const roleMap = new Map<CanonicalRole, number>();
+  for (const role of CANONICAL_ROLES) {
+    const existingRole = await prisma.payroll_roles.findUnique({ where: { name: role }, select: { id: true } });
+    const row = await prisma.payroll_roles.upsert({
+      where: { name: role },
+      update: { label: ROLE_LABELS[role] },
+      create: { name: role, label: ROLE_LABELS[role], permissions: {} },
     });
-
-    if (existing) {
-      roleMap.set(role.name, existing.id);
-      console.log(
-        `  ✓ Role already exists: ${role.name} (id=${existing.id})`
-      );
-      continue;
-    }
-
-    const created = await prisma.payroll_roles.create({
-      data: {
-        name: role.name,
-        label: role.label,
-        permissions: {},
-      },
-    });
-
-    roleMap.set(role.name, created.id);
-    console.log(`  + Created role: ${role.name} (id=${created.id})`);
+    roleMap.set(role, row.id);
+    console.log(`[seed] role=${role} status=${existingRole ? "already exists" : "created"}`);
   }
 
-  console.log("\n🌱 Seeding payroll_users...");
-
-  for (const user of TEST_USERS) {
-    const roleId = roleMap.get(user.role_name);
-
-    if (!roleId) {
-      throw new Error(`Role "${user.role_name}" was not found`);
-    }
-
-    const passwordHash = await bcrypt.hash(user.password, 10);
-
-    const existing = await prisma.payroll_users.findFirst({
-      where: {
-        OR: [
-          { username: user.username },
-          { email: user.email },
-        ],
-      },
-    });
-
-    if (existing) {
-      const updated = await prisma.payroll_users.update({
-        where: { id: existing.id },
-        data: {
-          role_id: roleId,
-          company_id: user.company_id,
-          full_name: user.full_name,
-          password_hash: passwordHash,
-          is_active: true,
-        },
-      });
-
-      console.log(
-        `  ↻ Updated user: ${updated.username} (id=${updated.id})`
-      );
-      continue;
-    }
-
-    const created = await prisma.payroll_users.create({
-      data: {
-        username: user.username,
-        email: user.email,
-        full_name: user.full_name,
-        password_hash: passwordHash,
+  await prisma.$transaction(async (tx) => {
+    for (const item of prepared) {
+      const roleId = roleMap.get(item.user.role);
+      if (!roleId) throw new Error(`Role not found: ${item.user.role}`);
+      const data = {
+        email: item.user.email,
+        full_name: item.user.fullName,
         role_id: roleId,
-        company_id: user.company_id,
-        is_active: true,
-      },
-    });
+        company_id: item.user.companyId,
+        is_active: item.user.isActive,
+        ...(item.passwordHash ? { password_hash: item.passwordHash } : {}),
+      };
 
-    console.log(`  + Created user: ${created.username} (id=${created.id})`);
-  }
+      if (!item.existing) {
+        await tx.payroll_users.create({
+          data: { ...data, username: item.user.username, password_hash: item.passwordHash! },
+        });
+        console.log(formatSeedUserLog(item.user, "created"));
+        continue;
+      }
 
-  console.log("\n✅ Seed complete.");
+      const changed =
+        item.existing.email !== item.user.email ||
+        item.existing.full_name !== item.user.fullName ||
+        item.existing.role_id !== roleId ||
+        item.existing.company_id !== item.user.companyId ||
+        item.existing.is_active !== item.user.isActive ||
+        Boolean(item.passwordHash);
+      if (!changed) {
+        console.log(formatSeedUserLog(item.user, "skipped"));
+        continue;
+      }
+      await tx.payroll_users.update({ where: { id: item.existing.id }, data });
+      console.log(formatSeedUserLog(item.user, "updated"));
+    }
+  });
+
+  console.log(`[seed][success] roles=${CANONICAL_ROLES.length} users=${prepared.length}`);
 }
 
 main()
   .catch((error) => {
-    console.error("❌ Seed failed:", error);
+    console.error("[seed][failure]", error instanceof Error ? error.message : "Unknown error");
     process.exitCode = 1;
   })
   .finally(async () => {

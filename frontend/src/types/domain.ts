@@ -9,7 +9,7 @@
  *  - generate types จาก DB ด้วย kysely-codegen หรือ prisma generate
  */
 
-export type Role = "admin" | "hr" | "accounting" | "field_staff" | "viewer";
+export type Role = "cyd_admin" | "admin" | "hr" | "accounting" | "field_staff" | "viewer";
 
 export interface Employee {
   id: string;

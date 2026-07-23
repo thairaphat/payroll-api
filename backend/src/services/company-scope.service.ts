@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import type { AuthUser } from "../middlewares/auth.middleware";
+import { logRequiredAudit } from "./audit.service";
 
 /**
  * number = filter to this specific company_id
@@ -8,6 +9,44 @@ import type { AuthUser } from "../middlewares/auth.middleware";
  * "deny" = user has no company_id assigned — reject with 403
  */
 export type CompanyScope = number | null | "deny";
+
+export class CompanyScopeError extends Error {
+  constructor(message: string, public readonly status: 400 | 403 | 404) {
+    super(message);
+  }
+}
+
+export async function resolveCompanyScope(
+  user: AuthUser,
+  requestedCompanyId?: string | number | null,
+  context?: { endpoint?: string; method?: string; requestId?: string }
+): Promise<number> {
+  if (user.role !== "cyd_admin") {
+    if (user.companyId == null) throw new CompanyScopeError("Company assignment is required.", 403);
+    if (requestedCompanyId != null && String(requestedCompanyId) !== String(user.companyId)) {
+      throw new CompanyScopeError("Cannot access another company.", 403);
+    }
+    return user.companyId;
+  }
+
+  if (requestedCompanyId == null || requestedCompanyId === "") {
+    throw new CompanyScopeError("companyId is required", 400);
+  }
+  const companyId = Number(requestedCompanyId);
+  if (!Number.isInteger(companyId) || companyId <= 0) {
+    throw new CompanyScopeError("companyId must be a positive integer", 400);
+  }
+  const company = await prisma.companies.findUnique({ where: { id: companyId }, select: { id: true } });
+  if (!company) throw new CompanyScopeError("Company not found", 404);
+
+  await logRequiredAudit("company.scope.view", "company", {
+    companyId,
+    endpoint: context?.endpoint,
+    method: context?.method,
+    requestId: context?.requestId,
+  }, user);
+  return companyId;
+}
 
 /**
  * Derives the company scope for a given authenticated user.
@@ -35,28 +74,30 @@ export function getCompanyScope(user: AuthUser): CompanyScope {
  * treat this as "nothing accessible" rather than "all records".
  */
 export async function getCompanyEmployeeCodes(companyId: number): Promise<string[]> {
-  const [profiles, mappings] = await Promise.all([
-    prisma.employee_document_profiles.findMany({
-      where: { company_id: companyId },
-      select: { emp_code: true },
-    }),
-    prisma.employee_code_mapping.findMany({
-      select: { sheet_employee_code: true, emp_code: true },
-    }),
-  ]);
+  // Profiles are the sole employee source of truth. Until attendance has its
+  // own company_id, duplicate codes are excluded because ownership is ambiguous.
+  const profiles = await prisma.employee_document_profiles.findMany({
+    where: { company_id: companyId, emp_code: { not: null } },
+    select: { emp_code: true },
+  });
+  const companyCodes = [...new Set(profiles.map((p) => p.emp_code).filter((c): c is string => Boolean(c)))];
+  if (companyCodes.length === 0) return [];
 
-  const empCodes = new Set<string>(
-    profiles.map((p) => p.emp_code).filter((c): c is string => c != null)
-  );
-
-  // Also include sheet_employee_codes that map to this company's emp_codes
-  for (const m of mappings) {
-    if (empCodes.has(m.emp_code)) {
-      empCodes.add(m.sheet_employee_code);
-    }
+  const matchingProfiles = await prisma.employee_document_profiles.findMany({
+    where: { emp_code: { in: companyCodes }, company_id: { not: null } },
+    select: { emp_code: true, company_id: true },
+  });
+  const ownersByCode = new Map<string, Set<number>>();
+  for (const profile of matchingProfiles) {
+    if (profile.emp_code == null || profile.company_id == null) continue;
+    const owners = ownersByCode.get(profile.emp_code) ?? new Set<number>();
+    owners.add(profile.company_id);
+    ownersByCode.set(profile.emp_code, owners);
   }
-
-  return [...empCodes];
+  const ambiguous = new Set(
+    [...ownersByCode.entries()].filter(([, owners]) => owners.size > 1).map(([code]) => code)
+  );
+  return companyCodes.filter((code) => !ambiguous.has(code));
 }
 
 /**

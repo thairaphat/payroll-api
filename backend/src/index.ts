@@ -7,6 +7,7 @@ import { fieldAttendanceRoute } from "./modules/attendance/field-attendance.rout
 import { employeeRoute } from "./modules/employees/employee.route";
 import { dashboardRoute } from "./modules/dashboard/dashboard.route";
 import { authRoute } from "./modules/auth/auth.route";
+import { userManagementRoute } from "./modules/users/user-management.route";
 import { prisma } from "./db";
 import { maskDatabaseUrl, extractJwtContext } from "./diag";
 
@@ -16,14 +17,6 @@ if (!_jwtSecret || _jwtSecret === "payroll-local-dev-secret") {
   console.error("FATAL: JWT_SECRET is not set or is using the insecure default value.");
   console.error("Add a strong JWT_SECRET to your .env file and restart the server.");
   console.error("Generate one with: node -e \"console.log(require('crypto').randomBytes(48).toString('base64'))\"");
-  process.exit(1);
-}
-
-// Fail fast if dev auth bypass is accidentally enabled in production
-if (process.env.ALLOW_DEV_AUTH_BYPASS === "true" && process.env.NODE_ENV === "production") {
-  console.error("FATAL: ALLOW_DEV_AUTH_BYPASS=true is NOT allowed in production.");
-  console.error("This setting lets anyone forge any user role without a valid JWT.");
-  console.error("Set ALLOW_DEV_AUTH_BYPASS=false in your production .env and restart.");
   process.exit(1);
 }
 
@@ -37,9 +30,7 @@ const app = new Elysia()
       allowedHeaders: [
         "Content-Type",
         "Authorization",
-        "X-User-Role",
-        "X-User-Id",
-        "X-User-Name",
+        "X-Request-Id",
       ],
       credentials: true,
     })
@@ -77,6 +68,7 @@ const app = new Elysia()
   .use(employeeRoute)
   .use(payrollRoute)
   .use(dashboardRoute)
+  .use(userManagementRoute)
 
   .onError(({ code, error, set, request }) => {
     const url = new URL(request.url).pathname;

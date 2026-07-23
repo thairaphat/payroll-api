@@ -44,6 +44,8 @@ import FieldAttendanceEntry from "./pages/FieldAttendanceEntry";
 import Payroll from "./pages/Payroll";
 import NotFound from "./pages/NotFound.tsx";
 import AccessDenied from "./pages/AccessDenied";
+import AdminCompanies from "./pages/AdminCompanies";
+import AdminUsers from "./pages/AdminUsers";
 
 
 /**
@@ -93,21 +95,21 @@ const AppRoutes = () => {
       {/* Protected */}
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
-          <Route element={<ProtectedRoute allowedRoles={["admin", "viewer"]} />}>
+          <Route element={<ProtectedRoute allowedRoles={["cyd_admin", "admin", "viewer"]} />}>
             <Route
               path="/dashboard"
               element={<Dashboard />}
             />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={["admin", "hr"]} />}>
+          <Route element={<ProtectedRoute allowedRoles={["cyd_admin", "admin", "hr"]} />}>
             <Route
               path="/employees"
               element={<Employees />}
             />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={["admin", "hr", "accounting"]} />}>
+          <Route element={<ProtectedRoute allowedRoles={["cyd_admin", "admin", "hr", "accounting"]} />}>
             <Route
               path="/attendance"
               element={<Attendance />}
@@ -121,10 +123,21 @@ const AppRoutes = () => {
             />
           </Route>
 
-          <Route element={<ProtectedRoute allowedRoles={["admin", "hr", "accounting"]} />}>
+          <Route element={<ProtectedRoute allowedRoles={["cyd_admin", "admin", "hr", "accounting"]} />}>
             <Route
               path="/payroll"
               element={<Payroll />}
+            />
+          </Route>
+
+          <Route element={<ProtectedRoute allowedRoles={["cyd_admin"]} />}>
+            <Route
+              path="/admin/companies"
+              element={<AdminCompanies />}
+            />
+            <Route
+              path="/admin/users"
+              element={<AdminUsers />}
             />
           </Route>
         </Route>

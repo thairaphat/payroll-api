@@ -12,8 +12,8 @@ export async function listEmployees(companyId?: number | null) {
   return await getAllEmployees(companyId);
 }
 
-export async function listCompanies() {
-  return await getCompanies();
+export async function listCompanies(companyId?: number) {
+  return await getCompanies(companyId);
 }
 
 export async function listEmployeesByCompany(companyId: string) {

@@ -2,8 +2,9 @@ import { authFetch } from "@/lib/authz";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
-export async function fetchEmployees() {
-  const res = await authFetch(`${API_URL}/employees`);
+export async function fetchEmployees(companyId?: number) {
+  const query = companyId != null ? `?companyId=${companyId}` : "";
+  const res = await authFetch(`${API_URL}/employees${query}`);
   const json = await res.json();
   if (!res.ok) throw new Error("โหลดข้อมูลพนักงานไม่สำเร็จ");
   return json.data ?? [];
@@ -35,51 +36,4 @@ export async function addManualEmployee(data: {
   const json = await res.json();
   if (!res.ok) throw new Error(json.message || "เพิ่มพนักงานไม่สำเร็จ");
   return json;
-}
-
-export async function getUnmappedAttendance() {
-  const res = await authFetch(`${API_URL}/employees/unmapped`);
-  if (!res.ok) throw new Error("โหลดข้อมูล Attendance ที่ยังไม่ได้ Map ไม่สำเร็จ");
-  const json = await res.json();
-  return json.data || [];
-}
-
-export async function saveMapping(sheet_employee_code: string, emp_code: string) {
-  const res = await authFetch(`${API_URL}/employees/mapping`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sheet_employee_code, emp_code }),
-  });
-
-  if (!res.ok) throw new Error("บันทึกการ Mapping ไม่สำเร็จ");
-  return res.json();
-}
-
-export interface MasterImportResult {
-  inserted: number;
-  updated: number;
-  skipped: number;
-  errors: string[];
-}
-
-/**
- * ซิงค์ employee master จาก Google Sheet → ตาราง employee_master_mapping (เท่านั้น)
- * ไม่เกี่ยวกับ attendance / payroll / employee_document_profiles
- */
-export async function syncEmployeeMaster(
-  sheetId: string
-): Promise<MasterImportResult> {
-  const res = await authFetch(`${API_URL}/employees/import-master`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sheetId }),
-  });
-
-  const json = await res.json().catch(() => null);
-  if (!res.ok || json?.status === "error") {
-    throw new Error(json?.message ?? "ซิงค์รายชื่อพนักงานไม่สำเร็จ");
-  }
-
-  // backend คืน { status: "success", data: { inserted, updated, skipped, errors } }
-  return (json?.data ?? json) as MasterImportResult;
 }

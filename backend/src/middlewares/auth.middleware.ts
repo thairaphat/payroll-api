@@ -1,4 +1,10 @@
-export type AppRole = "admin" | "hr" | "accounting" | "field_staff" | "viewer";
+import {
+  normalizeCanonicalRole,
+  validateUserRoleCompany,
+  type CanonicalRole,
+} from "../utils/user-policy";
+
+export type AppRole = CanonicalRole;
 
 export interface AuthUser {
   id?: string;
@@ -10,14 +16,8 @@ export interface AuthUser {
   companyId?: number | null;
 }
 
-const ROLES: AppRole[] = ["admin", "hr", "accounting", "field_staff", "viewer"];
-
-function normalizeRole(value: string | null | undefined): AppRole | null {
-  if (!value) return null;
-
-  const role = value.trim().toLowerCase();
-
-  return ROLES.includes(role as AppRole) ? (role as AppRole) : null;
+export function normalizeRole(value: string | null | undefined): AppRole | null {
+  return normalizeCanonicalRole(value);
 }
 
 type JwtVerifier = {
@@ -31,10 +31,6 @@ function getBearerToken(header: string | null) {
   return token || null;
 }
 
-function isDevBypassEnabled() {
-  return process.env.ALLOW_DEV_AUTH_BYPASS === "true";
-}
-
 export async function getAuthUser(
   request: Request,
   jwt?: JwtVerifier
@@ -46,30 +42,25 @@ export async function getAuthUser(
     const role = normalizeRole(payload && String(payload.role ?? ""));
 
     if (payload && role) {
+      let assignment: ReturnType<typeof validateUserRoleCompany>;
+      try {
+        assignment = validateUserRoleCompany(role, payload.companyId ?? null);
+      } catch {
+        return null;
+      }
       return {
         id: payload.userId ? String(payload.userId) : undefined,
         username: payload.username ? String(payload.username) : undefined,
         email: payload.email ? String(payload.email) : null,
-        role,
+        role: assignment.role,
         roleId: payload.roleId != null ? Number(payload.roleId) : null,
         dbRole: payload.dbRole ? String(payload.dbRole) : undefined,
-        companyId: payload.companyId != null ? Number(payload.companyId) : null,
+        companyId: assignment.companyId,
       };
     }
   }
 
-  if (!isDevBypassEnabled()) return null;
-
-  const headerRole = request.headers.get("x-user-role");
-  const role = normalizeRole(headerRole);
-
-  if (!role) return null;
-
-  return {
-    id: request.headers.get("x-user-id") ?? undefined,
-    username: request.headers.get("x-user-name") ?? undefined,
-    role,
-  };
+  return null;
 }
 
 export async function requireAuth({ request, set, jwt }: any) {

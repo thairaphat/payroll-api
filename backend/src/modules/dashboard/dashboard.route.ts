@@ -3,8 +3,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../db";
 import { getAuthUser, requireRole } from "../../middlewares/auth.middleware";
 import {
-  getCompanyScope,
   getCompanyEmployeeCodes,
+  resolveCompanyScope,
+  CompanyScopeError,
 } from "../../services/company-scope.service";
 import {
   TEST_CODE_PREFIX_FIELD,
@@ -19,29 +20,33 @@ import {
   getWageConfigsForCompanies,
 } from "../../services/wage-config.service";
 import { logRouteEnter, logApiError } from "../../diag";
+import { hasEmployeeCodes } from "../../utils/company-scope";
+import { logRequiredAudit } from "../../services/audit.service";
 
 export const dashboardRoute = new Elysia().get(
   "/dashboard/summary",
-  async ({ request, jwt, set }: any) => {
+  async ({ request, jwt, set, query }: any) => {
     const ENDPOINT = "/dashboard/summary";
 
     // ── 1. Resolve current user and company scope ────────────────────────────
     const user = await getAuthUser(request, jwt);
     logRouteEnter(ENDPOINT, user);
 
-    const scope = user ? getCompanyScope(user) : "deny";
-
-    if (scope === "deny") {
-      set.status = 403;
-      return {
-        ok: false,
-        message:
-          "No company assigned to your account. Contact your administrator.",
-      };
+    if (!user) { set.status = 401; return { ok: false, message: "Authentication required" }; }
+    let companyId: number;
+    try {
+      companyId = await resolveCompanyScope(user, query?.companyId, {
+        endpoint: ENDPOINT,
+        method: "GET",
+        requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+      });
+    } catch (error) {
+      if (error instanceof CompanyScopeError) {
+        set.status = error.status;
+        return { ok: false, message: error.message };
+      }
+      throw error;
     }
-
-    // scope is always a number here — "deny" was handled above
-    const companyId = scope as number;
 
     // ── 2. Total employee profiles + company employee codes (parallel) ────────
     let totalEmployeeProfiles: number;
@@ -60,28 +65,30 @@ export const dashboardRoute = new Elysia().get(
     }
 
     // ── 3. Payroll/OT summary — filtered to this company via e.company_id ────
-    let rows: any[];
+    let rows: any[] = [];
     try {
-      rows = await prisma.$queryRaw<any[]>(Prisma.sql`
+      if (hasEmployeeCodes(companyCodes)) {
+        rows = await prisma.$queryRaw<any[]>(Prisma.sql`
         SELECT
           a.employee_code,
           a.employee_name,
           MAX(a.branch_code)                   AS branch_code,
           MAX(e.company_id)                    AS company_id,
           COUNT(DISTINCT a.work_date)          AS work_days,
-          SUM(a.ot_hours)                      AS total_ot,
-          SUM(COALESCE(a.ot15, 0))             AS total_ot15,
-          SUM(COALESCE(a.ot2, 0))              AS total_ot2
+          COALESCE(SUM(a.ot_hours), 0)         AS total_ot,
+          COALESCE(SUM(a.ot15), 0)             AS total_ot15,
+          COALESCE(SUM(a.ot2), 0)              AS total_ot2
         FROM attendance_records a
-        LEFT JOIN employee_code_mapping m ON a.employee_code = m.sheet_employee_code
-        LEFT JOIN employee_document_profiles e ON COALESCE(m.emp_code, a.employee_code) = e.emp_code
+        INNER JOIN employee_document_profiles e ON a.employee_code = e.emp_code
         WHERE a.employee_code NOT LIKE ${TEST_CODE_PREFIX_FIELD}
           AND a.employee_code NOT LIKE ${TEST_CODE_PREFIX_MVP}
           AND a.employee_name <> ${TEST_EMPLOYEE_NAME}
           AND e.company_id = ${companyId}
+          AND a.employee_code IN (${Prisma.join(companyCodes)})
         GROUP BY a.employee_code, a.employee_name
         ORDER BY a.employee_code ASC
       `);
+      }
       console.log(`[dashboard] step=payrollOtSQL rowCount=${rows.length} companyId=${companyId}`);
     } catch (err) {
       logApiError(ENDPOINT, user, err, "step=payrollOtSQL companyId=" + companyId);
@@ -194,5 +201,33 @@ export const dashboardRoute = new Elysia().get(
   },
   // Allow admin, hr, accounting, viewer — all company-scoped roles
   // field_staff route directly to /field-attendance and do not use this endpoint
-  { beforeHandle: requireRole(["admin", "hr", "accounting", "viewer"]) }
+  { beforeHandle: requireRole(["cyd_admin", "admin", "hr", "accounting", "viewer"]) }
+).get(
+  "/admin/companies/summary",
+  async ({ request, jwt }: any) => {
+    const user = await getAuthUser(request, jwt);
+    const companies = await prisma.companies.findMany({ select: { id: true, company_name: true }, orderBy: { company_name: "asc" } });
+    const summaries = await Promise.all(companies.map(async (company) => {
+      const codes = await getCompanyEmployeeCodes(company.id);
+      const attendanceCount = codes.length === 0 ? 0 : await prisma.attendance_records.count({ where: { employee_code: { in: codes } } });
+      const lockedCount = codes.length === 0 ? 0 : await prisma.attendance_records.count({ where: { employee_code: { in: codes }, payroll_locked_at: { not: null } } });
+      return {
+        companyId: company.id,
+        companyName: company.company_name,
+        employeeCount: codes.length,
+        attendanceCount,
+        payrollStatus: lockedCount > 0 ? "locked" : attendanceCount > 0 ? "draft" : "no_data",
+      };
+    }));
+    await logRequiredAudit("company.scope.view", "company", {
+      endpoint: "/admin/companies/summary", method: "GET",
+      requestId: request.headers.get("x-request-id") ?? crypto.randomUUID(),
+    }, user);
+    return {
+      totalCompanies: companies.length,
+      totalEmployees: summaries.reduce((sum, company) => sum + company.employeeCount, 0),
+      companies: summaries,
+    };
+  },
+  { beforeHandle: requireRole(["cyd_admin"]) }
 );

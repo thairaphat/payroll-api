@@ -2,7 +2,7 @@
  * Payroll Page — Responsive + Modern UI
  */
 import { useRef, useState, useMemo, useEffect } from "react";
-import jsPDF from "jsPDF";
+import { jsPDF } from "jspdf";
 import { createRoot, type Root } from "react-dom/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -37,6 +37,8 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/store/auth";
 import { normalizeRole } from "@/lib/authz";
+import { getCompanies } from "@/services/employee.service";
+import { useSearchParams } from "react-router-dom";
 
 type PayrollRow = {
   employee_code: string;
@@ -168,7 +170,7 @@ const getLabel = (key: string, lang: PayrollLanguage) => {
 
   if (!item) return key;
 
-  const isDual = lang === "dual" || lang === "both" || (lang as string) === "th-mm" || (lang as string) === "th_mm";
+  const isDual = lang === "dual";
 
   if (isDual) {
     return `${item.th} / ${item.mm}`;
@@ -201,8 +203,8 @@ function SlipTemplate({
   periodEnd?: string;
   lang?: PayrollLanguage;
 }) {
-  const isDual = lang === "dual" || lang === "both" || (lang as string) === "th-mm" || (lang as string) === "th_mm";
-  const formatVal = (v: any) => num(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
+  const isDual = lang === "dual";
+  const formatVal = (v: number | string | undefined | null) => num(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
   const dailyWage = num(slip.work_days) > 0 ? num(slip.base_income) / num(slip.work_days) : 0;
   const deductionRows = DEDUCTION_FIELDS.map((item) => ({
     label: getLabel(item.labelKey, lang),
@@ -383,6 +385,9 @@ function SlipTemplate({
 export default function Payroll() {
   const queryClient = useQueryClient();
   const userRole = normalizeRole(useAuth((s) => s.user?.role));
+  const isCydAdmin = userRole === "cyd_admin";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedCompanyId = searchParams.get("companyId") ?? "";
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(THIS_MONTH);
   const [payrollScope, setPayrollScope] = useState<"ready" | "all">("ready");
@@ -471,14 +476,22 @@ export default function Payroll() {
     }
   };
 
+  const { data: scopedCompanies = [] } = useQuery({
+    queryKey: ["companies", "payroll-scope"],
+    queryFn: getCompanies,
+    enabled: isCydAdmin,
+  });
+
   const { data: availableMonths = [] } = useQuery({
-    queryKey: ["available-months"],
-    queryFn: getAvailableMonths,
+    queryKey: ["available-months", selectedCompanyId],
+    queryFn: () => getAvailableMonths(isCydAdmin ? Number(selectedCompanyId) : undefined),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   const { data: availableDates = [], isLoading: loadingDates } = useQuery({
-    queryKey: ["available-dates", selectedMonth],
-    queryFn: () => getAvailableDates(selectedMonth),
+    queryKey: ["available-dates", selectedMonth, selectedCompanyId],
+    queryFn: () => getAvailableDates(selectedMonth, isCydAdmin ? Number(selectedCompanyId) : undefined),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   useEffect(() => {
@@ -498,12 +511,14 @@ export default function Payroll() {
   const canSeeAllRecords = userRole === "admin" || userRole === "hr";
 
   const { data: rows = [], isLoading: loading, isError } = useQuery({
-    queryKey: ["payroll", selectedRange.startDate, selectedRange.endDate, payrollScope],
+    queryKey: ["payroll", selectedRange.startDate, selectedRange.endDate, payrollScope, selectedCompanyId],
     queryFn: () => fetchPayrollSummary({
       startDate: selectedRange.startDate,
       endDate: selectedRange.endDate,
       includeDraft: payrollScope === "all",
+      companyId: isCydAdmin ? Number(selectedCompanyId) : undefined,
     }),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   const canLockPayroll = userRole === "admin" || userRole === "accounting";
@@ -684,6 +699,16 @@ export default function Payroll() {
             </div>
           </div>
         </header>
+
+        {isCydAdmin && (
+          <Card className="p-4 rounded-2xl border-blue-200">
+            <label htmlFor="payroll-company" className="text-sm font-semibold text-slate-700">Company scope</label>
+            <select id="payroll-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="mt-2 h-11 w-full rounded-xl border px-3 bg-white">
+              <option value="">Select a company</option>
+              {scopedCompanies.map((company: { id: number; company_name: string }) => <option key={company.id} value={company.id}>{company.company_name}</option>)}
+            </select>
+          </Card>
+        )}
 
         <Card className="rounded-3xl border border-slate-200 bg-white shadow-xl overflow-hidden">
           <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">

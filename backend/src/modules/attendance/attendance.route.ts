@@ -10,7 +10,7 @@ import {
   TEST_EMPLOYEE_NAME,
   TEST_RECORD_WHERE,
 } from "../../constants/attendance";
-import { getCompanyScope, getCompanyEmployeeCodes } from "../../services/company-scope.service";
+import { CompanyScopeError, getCompanyScope, getCompanyEmployeeCodes, resolveCompanyScope } from "../../services/company-scope.service";
 import { logRouteEnter, logApiError } from "../../diag";
 
 const MONTH_PATTERN = /^\d{4}-\d{2}$/;
@@ -22,7 +22,7 @@ const attendanceScopeBody = t.Object({
   sourceSheetId: t.Optional(t.String()),
 });
 
-const attendanceListRoles = ["admin", "hr", "accounting", "field_staff"] as const;
+const attendanceListRoles = ["cyd_admin", "admin", "hr", "accounting", "field_staff"] as const;
 
 async function requireAttendanceListRole({ request, set, jwt }: any) {
   const user = await getAuthUser(request, jwt);
@@ -95,20 +95,21 @@ export const attendanceRoute = new Elysia()
         const user = await getAuthUser(request, jwt);
         logRouteEnter("/api/sheets/attendance", user);
 
-        const scope = user ? getCompanyScope(user) : "deny";
-        if (scope === "deny") {
-          set.status = 403;
-          return { ok: false, message: "No company assigned to your account. Contact your administrator." };
+        if (!user) { set.status = 401; return { ok: false, message: "Authentication required" }; }
+        let scope: number;
+        try {
+          scope = await resolveCompanyScope(user, query?.companyId, { endpoint: "/api/sheets/attendance", method: "GET", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID() });
+        } catch (error) {
+          if (error instanceof CompanyScopeError) { set.status = error.status; return { ok: false, message: error.message }; }
+          throw error;
         }
 
         // Pre-fetch company employee codes for scoped users
         let codeFilter: { in: string[] } | undefined;
         try {
-          if (scope !== null) {
-            const codes = await getCompanyEmployeeCodes(scope);
-            codeFilter = { in: codes }; // empty array = no accessible records
-            console.log(`[attendance] step=getCompanyEmployeeCodes scope=${scope} codeCount=${codes.length}`);
-          }
+          const codes = await getCompanyEmployeeCodes(scope);
+          codeFilter = { in: codes }; // empty array is fail-closed in Prisma
+          console.log(`[attendance] step=getCompanyEmployeeCodes scope=${scope} codeCount=${codes.length}`);
         } catch (err) {
           logApiError("/api/sheets/attendance", user, err, "step=getCompanyEmployeeCodes scope=" + scope);
           throw err;
@@ -141,27 +142,14 @@ export const attendanceRoute = new Elysia()
           throw err;
         }
 
-        // Resolve display names from employee_document_profiles.
-        // attendance_records.employee_name may be blank for auto-provisioned employees.
-        // Sheet-synced records may carry a sheet_employee_code — resolve through
-        // employee_code_mapping first (mirrors the JOIN used in payroll SQL).
+        // Resolve display names directly from employee_document_profiles.
         let enrichedData: any[] = data;
         if (data.length > 0) {
           const rawCodes = [...new Set(data.map((r) => r.employee_code))];
 
-          // Step 1: resolve sheet codes → canonical emp_codes (single query)
-          const mappings = await prisma.employee_code_mapping.findMany({
-            where: { sheet_employee_code: { in: rawCodes } },
-            select: { sheet_employee_code: true, emp_code: true },
-          });
-          const codeMap = new Map(mappings.map((m) => [m.sheet_employee_code, m.emp_code]));
-
-          // Step 2: collect resolved emp_codes (mapped overrides direct)
-          const empCodes = [...new Set(rawCodes.map((c) => codeMap.get(c) ?? c))];
-
-          // Step 3: batch-fetch profiles (single query)
+          // employee_code maps directly to employee_document_profiles.emp_code.
           const profiles = await prisma.employee_document_profiles.findMany({
-            where: { emp_code: { in: empCodes } },
+            where: { emp_code: { in: rawCodes }, company_id: scope },
             select: {
               emp_code: true,
               first_name: true,
@@ -175,8 +163,7 @@ export const attendanceRoute = new Elysia()
           const profileMap = new Map(profiles.map((p) => [p.emp_code, p]));
 
           enrichedData = data.map((r) => {
-            const resolvedCode = codeMap.get(r.employee_code) ?? r.employee_code;
-            const p = profileMap.get(resolvedCode);
+            const p = profileMap.get(r.employee_code);
 
             // Fallback: attendance name → Thai → English → base → employee_code
             const trimmed  = (r.employee_name ?? "").trim();
@@ -198,21 +185,36 @@ export const attendanceRoute = new Elysia()
         return { ok: true, data: enrichedData, total, page, pageSize };
       }, { beforeHandle: requireAttendanceListRole })
 
-      .get("/available-months", async () => {
+      .get("/available-months", async ({ request, jwt, set, query }: any) => {
+        const user = await getAuthUser(request, jwt);
+        if (!user) { set.status = 401; return []; }
+        let scope: number;
+        try { scope = await resolveCompanyScope(user, query?.companyId, { endpoint: "/api/sheets/available-months", method: "GET", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID() }); }
+        catch (error) { if (error instanceof CompanyScopeError) { set.status = error.status; return []; } throw error; }
+        const codes = await getCompanyEmployeeCodes(scope);
+        if (codes.length === 0) return [];
         const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m') AS month
           FROM attendance_records
           WHERE employee_code NOT LIKE ${TEST_CODE_PREFIX_FIELD}
             AND employee_code NOT LIKE ${TEST_CODE_PREFIX_MVP}
             AND employee_name <> ${TEST_EMPLOYEE_NAME}
+            AND employee_code IN (${Prisma.join(codes)})
           ORDER BY month DESC
         `);
         return rows.map(r => r.month);
       }, { beforeHandle: requireAttendanceListRole })
 
-      .get("/available-dates", async ({ query }: any) => {
+      .get("/available-dates", async ({ query, request, jwt, set }: any) => {
         const month = query.month; // Expected format: YYYY-MM
         if (!month || !MONTH_PATTERN.test(month)) return [];
+        const user = await getAuthUser(request, jwt);
+        if (!user) { set.status = 401; return []; }
+        let scope: number;
+        try { scope = await resolveCompanyScope(user, query?.companyId, { endpoint: "/api/sheets/available-dates", method: "GET", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID() }); }
+        catch (error) { if (error instanceof CompanyScopeError) { set.status = error.status; return []; } throw error; }
+        const codes = await getCompanyEmployeeCodes(scope);
+        if (codes.length === 0) return [];
 
         const rows = await prisma.$queryRaw<any[]>(Prisma.sql`
           SELECT DISTINCT DATE_FORMAT(work_date, '%Y-%m-%d') AS date
@@ -221,6 +223,7 @@ export const attendanceRoute = new Elysia()
             AND employee_code NOT LIKE ${TEST_CODE_PREFIX_FIELD}
             AND employee_code NOT LIKE ${TEST_CODE_PREFIX_MVP}
             AND employee_name <> ${TEST_EMPLOYEE_NAME}
+            AND employee_code IN (${Prisma.join(codes)})
           ORDER BY date DESC
         `);
         return rows.map(r => r.date);
@@ -237,7 +240,12 @@ export const attendanceRoute = new Elysia()
         return { success: false, message: "Authentication required" };
       }
 
-      return await submitAttendance(body as any, user);
+      const scope = getCompanyScope(user);
+      if (scope === "deny" || scope === null) {
+        set.status = 403;
+        return { success: false, message: "A company assignment is required." };
+      }
+      return await submitAttendance(body as any, user, scope);
     } catch (error) {
       set.status = 400;
       return {
@@ -260,7 +268,12 @@ export const attendanceRoute = new Elysia()
         return { success: false, message: "Authentication required" };
       }
 
-      return await approveAttendance(body as any, user);
+      const scope = getCompanyScope(user);
+      if (scope === "deny" || scope === null) {
+        set.status = 403;
+        return { success: false, message: "A company assignment is required." };
+      }
+      return await approveAttendance(body as any, user, scope);
     } catch (error) {
       set.status = 400;
       return {

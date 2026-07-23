@@ -18,6 +18,7 @@ export function normalizeRole(role: string | undefined | null): Role | null {
 
   const normalized = role.trim().toLowerCase();
   if (
+    normalized === "cyd_admin" ||
     normalized === "admin" ||
     normalized === "hr" ||
     normalized === "accounting" ||
@@ -28,6 +29,10 @@ export function normalizeRole(role: string | undefined | null): Role | null {
   }
 
   return null;
+}
+
+export function hasRole(role: string | undefined | null, expected: Role) {
+  return normalizeRole(role) === expected;
 }
 
 export function canAccessRole(
@@ -53,7 +58,6 @@ export function getMockSession(): MockSession | null {
 
 export function getMockAuthHeaders(): HeadersInit {
   const session = getMockSession();
-  const user = session?.user ?? session;
   const token = session?.token;
 
   if (token) {
@@ -62,19 +66,7 @@ export function getMockAuthHeaders(): HeadersInit {
     };
   }
 
-  if (!user?.role) return {};
-
-  const role = normalizeRole(user.role);
-  if (!role) return {};
-
-  const tokenPayload = { ...user, role };
-
-  return {
-    Authorization: `Bearer ${btoa(JSON.stringify(tokenPayload))}`,
-    "X-User-Role": role,
-    ...(user.id ? { "X-User-Id": user.id } : {}),
-    ...(user.username ? { "X-User-Name": user.username } : {}),
-  };
+  return {};
 }
 
 export async function authFetch(input: RequestInfo | URL, init: RequestInit = {}) {

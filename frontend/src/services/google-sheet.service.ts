@@ -37,6 +37,7 @@ export type AttendanceListParams = {
   approvalStatus?: string;
   page?: number;
   pageSize?: number;
+  companyId?: number;
 };
 
 export async function getAttendanceRecords(params: AttendanceListParams = {}) {
@@ -49,6 +50,7 @@ export async function getAttendanceRecords(params: AttendanceListParams = {}) {
   }
   if (params.page) query.set("page", String(params.page));
   if (params.pageSize) query.set("pageSize", String(params.pageSize));
+  if (params.companyId != null) query.set("companyId", String(params.companyId));
 
   const url = `${API_URL}/api/sheets/attendance${query.toString() ? `?${query}` : ""}`;
   const res = await authFetch(url);
@@ -62,16 +64,19 @@ export async function getAttendanceRecords(params: AttendanceListParams = {}) {
   return Array.isArray(result) ? result : (result?.data ?? []);
 }
 
-export async function getAvailableMonths(): Promise<string[]> {
-  const res = await authFetch(`${API_URL}/api/sheets/available-months`);
+export async function getAvailableMonths(companyId?: number): Promise<string[]> {
+  const query = companyId != null ? `?companyId=${companyId}` : "";
+  const res = await authFetch(`${API_URL}/api/sheets/available-months${query}`);
   if (!res.ok) {
     throw new Error("โหลดเดือนที่พร้อมใช้งานไม่สำเร็จ");
   }
   return res.json();
 }
 
-export async function getAvailableDates(month: string): Promise<string[]> {
-  const res = await authFetch(`${API_URL}/api/sheets/available-dates?month=${month}`);
+export async function getAvailableDates(month: string, companyId?: number): Promise<string[]> {
+  const query = new URLSearchParams({ month });
+  if (companyId != null) query.set("companyId", String(companyId));
+  const res = await authFetch(`${API_URL}/api/sheets/available-dates?${query}`);
   if (!res.ok) {
     throw new Error("โหลดวันที่ที่พร้อมใช้งานไม่สำเร็จ");
   }

@@ -49,14 +49,22 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
       // Step 1: Get current user and derive company scope
       const user = await getAuthUser(request, jwt);
       const lockScope = user ? getCompanyScope(user) : null;
-      const lockCompanyId = lockScope !== "deny" && lockScope !== null ? lockScope : undefined;
+      if (lockScope === "deny" || lockScope === null) {
+        set.status = 403;
+        return { success: false, message: "A company assignment is required to lock payroll." };
+      }
+      const lockCompanyId = lockScope;
 
       // Step 2: Get global wage config — used only for audit log metadata.
       // Actual per-employee wages come from each row's daily_wage_used field.
       const globalWageConfig = await getActiveWageConfig();
 
       // Step 3: Calculate payroll BEFORE locking (per-company wages applied internally).
-      const payrollRows = await getPayrollSummaryLive(range);
+      const payrollRows = await getPayrollSummaryLive(range, lockCompanyId);
+      if (payrollRows.length === 0) {
+        set.status = 422;
+        return { success: false, message: "No eligible employees or approved attendance found in this company scope." };
+      }
 
       // Step 4: Lock attendance records (sets payroll_locked_at on APPROVED records)
       const lockResult = await lockPayrollPeriod(input, lockCompanyId);
@@ -139,8 +147,8 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
     body: payrollLockBody,
   })
   .get("/", payrollSummaryController, {
-    beforeHandle: requireRole(["admin", "hr", "accounting"]),
+    beforeHandle: requireRole(["cyd_admin", "admin", "hr", "accounting"]),
   })
   .get("/:employeeCode", payrollByEmployeeController, {
-    beforeHandle: requireRole(["admin", "hr", "accounting"]),
+    beforeHandle: requireRole(["cyd_admin", "admin", "hr", "accounting"]),
   });

@@ -79,7 +79,7 @@ export function resolveDisplayName(emp: {
 export async function getAllEmployees(companyId?: number | null) {
   const profileWhere = companyId != null ? { company_id: companyId } : {};
 
-  const [employees, companies, attendanceRecords, mappings] = await Promise.all([
+  const [employees, companies, attendanceRecords] = await Promise.all([
     prisma.employee_document_profiles.findMany({
       where: profileWhere,
       select: {
@@ -105,18 +105,10 @@ export async function getAllEmployees(companyId?: number | null) {
       select: { employee_code: true },
       distinct: ["employee_code"],
     }),
-    prisma.employee_code_mapping.findMany(),
   ]);
 
   const companyMap = new Map(companies.map((c) => [c.id, c.company_name]));
   const attendanceCodes = new Set(attendanceRecords.map((a) => a.employee_code));
-
-  // emp_codes that are matched via mapping where sheet_employee_code exists in attendance
-  const mappedMatchedEmpCodes = new Set(
-    mappings
-      .filter((m) => attendanceCodes.has(m.sheet_employee_code))
-      .map((m) => m.emp_code)
-  );
 
   return employees.map((emp) => {
     const names = deriveCleanNames(emp);
@@ -132,8 +124,7 @@ export async function getAllEmployees(companyId?: number | null) {
       company_name: companyMap.get(emp.company_id || 0) || "-",
       is_matched:
         !!emp.emp_code &&
-        (attendanceCodes.has(emp.emp_code) ||
-          mappedMatchedEmpCodes.has(emp.emp_code)),
+        attendanceCodes.has(emp.emp_code),
       full_name_th,
       full_name_en,
       display_name,
@@ -202,26 +193,19 @@ export async function getUnmappedAttendanceCodes() {
     distinct: ['employee_code']
   });
 
-  // 2. Get all existing profile codes
+  // 2. Get all existing profile codes. This legacy helper is intentionally
+  // unscoped and is no longer exposed by the route.
   const profiles = await prisma.employee_document_profiles.findMany({
     select: { emp_code: true }
   });
   const profileCodes = new Set(profiles.map(p => p.emp_code).filter(Boolean));
 
-  // 3. Get all existing mappings
-  const mappings = await prisma.employee_code_mapping.findMany({
-    select: { sheet_employee_code: true }
-  });
-  const mappedCodes = new Set(mappings.map(m => m.sheet_employee_code));
-
-  // Filter out those that are already matched or mapped
-  return attendance.filter(a => 
-    !profileCodes.has(a.employee_code) && !mappedCodes.has(a.employee_code)
-  );
+  return attendance.filter((a) => !profileCodes.has(a.employee_code));
 }
 
-export async function getCompanies() {
+export async function getCompanies(companyId?: number) {
   return await prisma.companies.findMany({
+    where: companyId != null ? { id: companyId } : undefined,
     select: {
       id: true,
       company_name: true,
@@ -233,9 +217,5 @@ export async function getCompanies() {
 }
 
 export async function createEmployeeMapping(sheet_employee_code: string, emp_code: string) {
-  return await prisma.employee_code_mapping.upsert({
-    where: { sheet_employee_code },
-    update: { emp_code },
-    create: { sheet_employee_code, emp_code }
-  });
+  throw new Error("employee_code_mapping is deprecated and cannot be changed.");
 }

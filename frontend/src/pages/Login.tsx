@@ -11,6 +11,7 @@ import type { Role } from "@/types/domain";
 import { normalizeRole } from "@/lib/authz";
 
 const DEFAULT_ROUTE_BY_ROLE: Record<Role, string> = {
+  cyd_admin: "/admin/companies",
   admin: "/dashboard",
   hr: "/employees",
   accounting: "/payroll",

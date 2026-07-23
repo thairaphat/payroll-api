@@ -6,6 +6,14 @@ export type AuditAction =
   | "attendance.submit"
   | "attendance.approve"
   | "payroll.lock"
+  | "company.scope.view"
+  | "USER_CREATED"
+  | "USER_UPDATED"
+  | "USER_ROLE_CHANGED"
+  | "USER_COMPANY_CHANGED"
+  | "USER_ACTIVATED"
+  | "USER_DEACTIVATED"
+  | "USER_PASSWORD_RESET"
   | "employee.auto_created"
   | "employee_master.import";
 
@@ -13,7 +21,9 @@ export type AuditEntityType =
   | "attendance_period"
   | "payroll_period"
   | "employee"
-  | "employee_master_mapping";
+  | "employee_master_mapping"
+  | "company"
+  | "user";
 
 export interface AuditScope {
   date?: string;
@@ -21,6 +31,11 @@ export interface AuditScope {
   endDate?: string;
   sourceSheetId?: string;
   sourceSheetName?: string;
+  companyId?: number;
+  targetCompanyId?: number;
+  endpoint?: string;
+  method?: string;
+  requestId?: string;
 }
 
 /**
@@ -52,4 +67,28 @@ export async function logAudit(
   } catch (err) {
     console.error("[audit] Failed to write audit log for action=%s:", action, err);
   }
+}
+
+/**
+ * Writes a security-critical audit entry. Unlike normal operational audit
+ * logging, callers must fail closed if this write cannot be persisted.
+ */
+export async function logRequiredAudit(
+  action: AuditAction,
+  entityType: AuditEntityType,
+  scope: AuditScope,
+  user: AuthUser | null,
+  metadata?: Record<string, unknown>
+): Promise<void> {
+  await prisma.payroll_audit_logs.create({
+    data: {
+      action,
+      actor_user_id: user?.id ? Number(user.id) : null,
+      actor_username: user?.username ?? null,
+      actor_role: user?.role ?? null,
+      entity_type: entityType,
+      entity_scope: scope as any,
+      metadata: (metadata ?? null) as any,
+    },
+  });
 }

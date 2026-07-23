@@ -8,6 +8,7 @@
 
 import { Card } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
 import {
   Users,
@@ -16,6 +17,9 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { authFetch } from "@/lib/authz";
+import { getCompanies } from "@/services/employee.service";
+import { useAuth } from "@/store/auth";
+import { hasRole } from "@/lib/authz";
 
 type DashboardEmployee = {
   code: string;
@@ -44,8 +48,9 @@ type DashboardSummary = {
   todayFieldEntry?: TodayFieldEntry;
 };
 
-const fetchDashboardSummary = async (): Promise<DashboardSummary> => {
-  const res = await authFetch(`${import.meta.env.VITE_API_URL || ""}/dashboard/summary`);
+const fetchDashboardSummary = async (companyId?: number): Promise<DashboardSummary> => {
+  const query = companyId != null ? `?companyId=${companyId}` : "";
+  const res = await authFetch(`${import.meta.env.VITE_API_URL || ""}/dashboard/summary${query}`);
   if (!res.ok) {
     throw new Error("โหลด Dashboard ไม่สำเร็จ");
   }
@@ -53,9 +58,19 @@ const fetchDashboardSummary = async (): Promise<DashboardSummary> => {
 };
 
 export default function Dashboard() {
+  const user = useAuth((state) => state.user);
+  const isCydAdmin = hasRole(user?.role, "cyd_admin");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedCompanyId = searchParams.get("companyId") ?? "";
+  const { data: companies = [] } = useQuery({
+    queryKey: ["companies", "dashboard-scope"],
+    queryFn: getCompanies,
+    enabled: isCydAdmin,
+  });
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["dashboard-summary"],
-    queryFn: fetchDashboardSummary,
+    queryKey: ["dashboard-summary", selectedCompanyId],
+    queryFn: () => fetchDashboardSummary(isCydAdmin ? Number(selectedCompanyId) : undefined),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   const stats = [
@@ -97,7 +112,7 @@ export default function Dashboard() {
     },
   ];
 
-  if (isLoading) {
+  if (isLoading && (!isCydAdmin || Boolean(selectedCompanyId))) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-[#f4f7fb] to-[#e6edff] p-8">
         <div className="flex items-center gap-3">
@@ -146,6 +161,24 @@ export default function Dashboard() {
             </div>
           </div>
         </header>
+
+        {isCydAdmin && (
+          <Card className="p-4 rounded-2xl border-blue-200">
+            <label htmlFor="dashboard-company" className="text-sm font-semibold text-slate-700">Company scope</label>
+            <select
+              id="dashboard-company"
+              value={selectedCompanyId}
+              onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})}
+              className="mt-2 h-11 w-full rounded-xl border px-3 bg-white"
+            >
+              <option value="">Select a company</option>
+              {companies.map((company: { id: number; company_name: string }) => (
+                <option key={company.id} value={company.id}>{company.company_name}</option>
+              ))}
+            </select>
+            {!selectedCompanyId && <p className="mt-2 text-sm text-slate-500">Select a company before viewing detailed operational data.</p>}
+          </Card>
+        )}
 
         {/* ================= STATS ================= */}
 

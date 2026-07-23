@@ -2,8 +2,8 @@ import { prisma } from "../../db";
 import { APPROVAL_STATUS } from "../../constants/attendance";
 import { readAttendanceFromGoogleSheet } from "./google-sheet.service";
 import { logAudit } from "../../services/audit.service";
-import { ensureEmployeeProfilesForBatch } from "../../services/employee-provisioning.service";
 import type { AuthUser } from "../../middlewares/auth.middleware";
+import { getCompanyEmployeeCodes, getCompanyScope } from "../../services/company-scope.service";
 
 const UPDATE_CHUNK_SIZE = 100;
 
@@ -65,7 +65,18 @@ export async function syncAttendanceFromSheet({
 
   try {
     isSyncing = true;
-    const { rows, errors } = await readAttendanceFromGoogleSheet(sheetId);
+    const { rows: sheetRows, errors } = await readAttendanceFromGoogleSheet(sheetId);
+    const scope = user ? getCompanyScope(user) : "deny";
+    if (scope === "deny" || scope === null) {
+      throw new Error("A company assignment is required to import attendance.");
+    }
+    const allowedCodes = await getCompanyEmployeeCodes(scope);
+    const allowedSet = new Set(allowedCodes);
+    const rows = sheetRows.filter((row) => {
+      if (allowedSet.has(row.employeeCode)) return true;
+      errors.push(`Unmapped or ambiguous employee_code skipped: ${row.employeeCode}`);
+      return false;
+    });
 
     if (rows.length === 0) {
       return { inserted: 0, updated: 0, skipped: 0, errors, rows: [] };
@@ -162,16 +173,8 @@ export async function syncAttendanceFromSheet({
       }
     }
 
-    // Auto-provision employee profiles for all codes seen in this sheet sync.
-    // Runs after inserts/updates — errors are swallowed inside the service.
-    await ensureEmployeeProfilesForBatch(
-      (rows as any[]).map((r) => ({ employeeCode: r.employeeCode, employeeName: r.employeeName })),
-      "attendance_sync",
-      sheetId,
-      user ?? null
-    );
-
     const latestRows = await prisma.attendance_records.findMany({
+      where: { employee_code: { in: allowedCodes } },
       orderBy: [{ work_date: "desc" }, { id: "desc" }],
       take: 50,
     });

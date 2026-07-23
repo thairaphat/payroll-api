@@ -1,4 +1,4 @@
-import jsPDF from "jsPDF";
+import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { SarabunRegular, SarabunBold } from "../assets/fonts/sarabun";
 import { NotoSansMyanmarRegular, NotoSansMyanmarBold } from "../assets/fonts/notoSansMyanmar";
@@ -201,7 +201,7 @@ export const generateNativePayrollSlipPdf = async (
   pdf.setFont(primaryFont, "bold");
   pdf.text("PAY SLIP", pageWidth / 2, y + 10, { align: "center" });
 
-  const isDual = lang === "dual" || lang === "both" || (lang as string) === "th-mm" || (lang as string) === "th_mm";
+  const isDual = lang === "dual";
   pdf.setFontSize(11);
   const subHeader = lang === "mm" ? "လစာမှတ်တမ်း" : (isDual ? "ใบแจ้งยอดเงินเดือนนี้ / လစာမှတ်တမ်း" : "ใบแจ้งยอดเงินเดือนนี้");
   pdf.text(subHeader, pageWidth / 2, y + 18, { align: "center" });

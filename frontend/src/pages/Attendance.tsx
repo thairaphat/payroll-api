@@ -34,8 +34,49 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/store/auth";
 import { normalizeRole } from "@/lib/authz";
+import { getCompanies } from "@/services/employee.service";
+import { useSearchParams } from "react-router-dom";
 
 type ApprovalFilter = "all" | "draft" | "submitted" | "approved" | "locked";
+
+type BackendAttendanceRow = {
+  id?: string | number;
+  employee_code?: string;
+  employee_name?: string;
+  work_date?: string;
+  is_present?: boolean;
+  ot1?: number | string;
+  ot15?: number | string;
+  ot2?: number | string;
+  ot_hours?: number | string;
+  note?: string | null;
+  shift_name?: string | null;
+  branch_code?: string | null;
+  work_time?: string | null;
+  approval_status?: string | null;
+  payroll_locked_at?: string | null;
+  source_sheet_id?: string | null;
+};
+
+type AttendanceView = {
+  id: string;
+  employeeCode: string;
+  employeeName: string;
+  workDate: string;
+  isPresent: boolean;
+  isLeave: boolean;
+  ot1: number;
+  ot15: number;
+  ot2: number;
+  otHours: number;
+  note?: string | null;
+  shiftName?: string | null;
+  branchCode?: string | null;
+  workTime: string;
+  approvalStatus: string;
+  payrollLockedAt?: string | null;
+  sourceSheetId?: string | null;
+};
 
 const toMonthValue = (date: Date) => {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
@@ -57,6 +98,9 @@ const LAST_MONTH = toMonthValue(lastMonthDate);
 export default function Attendance() {
   const queryClient = useQueryClient();
   const userRole = normalizeRole(useAuth((s) => s.user?.role));
+  const isCydAdmin = userRole === "cyd_admin";
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedCompanyId = searchParams.get("companyId") ?? "";
   const [syncing, setSyncing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -67,9 +111,16 @@ export default function Attendance() {
 
   const GOOGLE_SHEET_ID = import.meta.env.VITE_GOOGLE_SHEET_ID ?? "";
 
+  const { data: companies = [] } = useQuery({
+    queryKey: ["companies", "attendance-scope"],
+    queryFn: getCompanies,
+    enabled: isCydAdmin,
+  });
+
   const { data: availableMonths = [] } = useQuery({
-    queryKey: ["available-months"],
-    queryFn: getAvailableMonths,
+    queryKey: ["available-months", selectedCompanyId],
+    queryFn: () => getAvailableMonths(isCydAdmin ? Number(selectedCompanyId) : undefined),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   const allMonthOptions = useMemo(() => {
@@ -85,17 +136,17 @@ export default function Attendance() {
       .replace(/^(\d):/, "0$1:");
   };
 
-  const mapBackendRows = (rows: any[]) => {
-    return rows.map((r: any) => {
+  const mapBackendRows = (rows: BackendAttendanceRow[]): AttendanceView[] => {
+    return rows.map((r) => {
       const ot1 = Number(r.ot1 ?? 0);
       const ot15 = Number(r.ot15 ?? 0);
       const ot2 = Number(r.ot2 ?? 0);
 
       return {
-        id: r.id,
-        employeeCode: r.employee_code,
-        employeeName: r.employee_name,
-        workDate: r.work_date?.split("T")[0] ?? r.work_date,
+        id: String(r.id ?? ""),
+        employeeCode: r.employee_code ?? "",
+        employeeName: r.employee_name ?? "",
+        workDate: r.work_date?.split("T")[0] ?? "",
         isPresent: Boolean(r.is_present),
         isLeave: false,
 
@@ -119,19 +170,21 @@ export default function Attendance() {
   const monthRange = getMonthRange(selectedMonth);
 
   const { data: attendance = [], isLoading, isError } = useQuery({
-    queryKey: ["attendance", selectedMonth, approvalFilter],
+    queryKey: ["attendance", selectedMonth, approvalFilter, selectedCompanyId],
     queryFn: async () => {
       const rows = await getAttendanceRecords({
         ...monthRange,
         approvalStatus: approvalFilter,
+        companyId: isCydAdmin ? Number(selectedCompanyId) : undefined,
       });
-      return mapBackendRows(rows);
-    }
+      return mapBackendRows(rows as BackendAttendanceRow[]);
+    },
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
   const dateOptions = Array.from(
-    new Set(attendance.map((a: any) => a.workDate).filter(Boolean))
-  ).sort((a: any, b: any) => b.localeCompare(a));
+    new Set(attendance.map((a) => a.workDate).filter(Boolean))
+  ).sort((a, b) => b.localeCompare(a));
 
   const handleSync = async () => {
     if (!GOOGLE_SHEET_ID) {
@@ -218,14 +271,14 @@ export default function Attendance() {
   };
 
   const recent = [...attendance]
-    .filter((a: any) => !selectedDate || a.workDate === selectedDate)
-    .filter((a: any) => {
+    .filter((a) => !selectedDate || a.workDate === selectedDate)
+    .filter((a) => {
       if (approvalFilter === "all") return true;
       if (approvalFilter === "locked") return Boolean(a.payrollLockedAt);
       if (a.payrollLockedAt) return false;
       return (a.approvalStatus ?? "draft") === approvalFilter;
     })
-    .filter((a: any) => {
+    .filter((a) => {
       const keyword = search.toLowerCase();
       const employeeName = a.employeeName ?? "";
 
@@ -238,12 +291,12 @@ export default function Attendance() {
 
   const canSubmit = userRole === "field_staff";
   const canApprove = userRole === "admin" || userRole === "hr";
-  const hasDraft = recent.some((a: any) => !a.payrollLockedAt && (a.approvalStatus ?? "draft") === "draft");
-  const hasSubmitted = recent.some((a: any) => !a.payrollLockedAt && a.approvalStatus === "submitted");
+  const hasDraft = recent.some((a) => !a.payrollLockedAt && (a.approvalStatus ?? "draft") === "draft");
+  const hasSubmitted = recent.some((a) => !a.payrollLockedAt && a.approvalStatus === "submitted");
 
-  const presentCount = recent.filter((a: any) => a.isPresent).length;
-  const leaveCount = recent.filter((a: any) => a.isLeave).length;
-  const absentCount = recent.filter((a: any) => !a.isPresent && !a.isLeave).length;
+  const presentCount = recent.filter((a) => a.isPresent).length;
+  const leaveCount = recent.filter((a) => a.isLeave).length;
+  const absentCount = recent.filter((a) => !a.isPresent && !a.isLeave).length;
 
   if (isError) {
     return (
@@ -275,7 +328,7 @@ export default function Attendance() {
           </div>
         </div>
 
-        <Button
+        {!isCydAdmin && <Button
           onClick={handleSync}
           disabled={syncing}
           size="lg"
@@ -285,8 +338,18 @@ export default function Attendance() {
             className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`}
           />
           {syncing ? "กำลัง Sync..." : "Sync จาก Google Sheet"}
-        </Button>
+        </Button>}
       </header>
+
+      {isCydAdmin && (
+        <Card className="p-4 rounded-2xl border-blue-200">
+          <label htmlFor="attendance-company" className="text-sm font-semibold text-slate-700">Company scope</label>
+          <select id="attendance-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="mt-2 h-11 w-full rounded-xl border px-3 bg-white">
+            <option value="">Select a company</option>
+            {companies.map((company: { id: number; company_name: string }) => <option key={company.id} value={company.id}>{company.company_name}</option>)}
+          </select>
+        </Card>
+      )}
 
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
         <Card className="rounded-xl border border-gray-200 bg-green-100/50 p-5 lg:p-6 shadow-sm text-green-800">

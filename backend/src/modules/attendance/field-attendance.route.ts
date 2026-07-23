@@ -6,14 +6,16 @@ import {
   FIELD_APP_SHEET_ID,
   TEST_RECORD_WHERE,
 } from "../../constants/attendance";
-import { ensureEmployeeProfilesForBatch } from "../../services/employee-provisioning.service";
 import {
   getCompanyScope,
   getCompanyEmployeeCodes,
+  resolveCompanyScope,
+  CompanyScopeError,
 } from "../../services/company-scope.service";
 import { logRouteEnter, logApiError } from "../../diag";
 
-const fieldAttendanceAccess = requireRole(["admin", "hr", "field_staff"]);
+const fieldAttendanceAccess = requireRole(["cyd_admin", "admin", "hr", "field_staff"]);
+const fieldAttendanceWriteAccess = requireRole(["admin", "hr", "field_staff"]);
 
 export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance" })
   .get("/", async (context: any) => {
@@ -24,26 +26,22 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
     const user = await getAuthUser(request, jwt);
     logRouteEnter("/api/field-attendance", user);
 
-    const scope = user ? getCompanyScope(user) : "deny";
-    if (scope === "deny") {
-      set.status = 403;
-      return { ok: false, message: "No company assigned to your account. Contact your administrator." };
-    }
+    if (!user) { set.status = 401; return { ok: false, message: "Authentication required" }; }
+    let scope: number;
+    try { scope = await resolveCompanyScope(user, query?.companyId, { endpoint: "/api/field-attendance", method: "GET", requestId: request.headers.get("x-request-id") ?? crypto.randomUUID() }); }
+    catch (error) { if (error instanceof CompanyScopeError) { set.status = error.status; return { ok: false, message: error.message }; } throw error; }
 
     // Build employee_code filter for company-scoped users
-    let codeFilter: { in: string[] } | undefined;
-    if (scope !== null) {
-      const codes = await getCompanyEmployeeCodes(scope);
-      if (codes.length === 0) return [];
-      codeFilter = { in: codes };
-    }
+    const codes = await getCompanyEmployeeCodes(scope);
+    if (codes.length === 0) return [];
+    const codeFilter = { in: codes };
 
     const records = await prisma.attendance_records.findMany({
       where: {
         work_date: new Date(date as string),
         source_sheet_id: FIELD_APP_SHEET_ID,
         NOT: [...TEST_RECORD_WHERE],
-        ...(codeFilter ? { employee_code: codeFilter } : {}),
+        employee_code: codeFilter,
       },
       orderBy: { id: "asc" },
     });
@@ -54,7 +52,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
     // may be blank/whitespace for employees created via auto-provisioning.
     const empCodes = [...new Set(records.map((r) => r.employee_code))];
     const profiles = await prisma.employee_document_profiles.findMany({
-      where: { emp_code: { in: empCodes } },
+      where: { emp_code: { in: empCodes }, company_id: scope },
       select: {
         emp_code: true,
         first_name: true,
@@ -105,7 +103,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
 
     // Enforce company scope: field_staff must have a company assigned
     const scope = getCompanyScope(user);
-    if (scope === "deny") {
+    if (scope === "deny" || scope === null) {
       set.status = 403;
       return { success: false, message: "No company assigned to your account. Contact your administrator." };
     }
@@ -117,7 +115,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
       const allowedCodes = await getCompanyEmployeeCodes(scope);
       const allowedSet = new Set(allowedCodes);
 
-      // Check only codes that already exist in the DB (new codes will be auto-provisioned)
+      // All submitted codes must already belong to the caller's company.
       const existingProfiles = await prisma.employee_document_profiles.findMany({
         where: {
           emp_code: { in: submittedCodes },
@@ -126,32 +124,19 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
         select: { emp_code: true, company_id: true },
       });
 
-      const outOfScope = existingProfiles.filter(
-        (p) => p.company_id !== scope && !allowedSet.has(p.emp_code!)
-      );
+      const outOfScope = existingProfiles.filter((p) => p.company_id !== scope || !allowedSet.has(p.emp_code!));
+      const unknownCodes = submittedCodes.filter((code: string) => !allowedSet.has(code));
 
-      if (outOfScope.length > 0) {
+      if (outOfScope.length > 0 || unknownCodes.length > 0) {
         set.status = 403;
         return {
           success: false,
-          message: `Records contain employees outside your company scope: ${outOfScope.map((p) => p.emp_code).join(", ")}`,
+          message: "Records contain unknown, ambiguous, or out-of-scope employee codes.",
         };
       }
     }
 
     const workDate = new Date(date);
-
-    // Auto-provision profiles. Pass user's companyId so new employees are assigned correctly.
-    await ensureEmployeeProfilesForBatch(
-      records.map((rec: any) => ({
-        employeeCode: rec.employee_code,
-        employeeName: `${rec.first_name || ""} ${rec.last_name || ""}`.trim() || rec.employee_name || "",
-      })),
-      "field_attendance",
-      FIELD_APP_SHEET_ID,
-      user,
-      scope !== null ? scope : undefined
-    );
 
     for (const rec of records) {
       const employeeName = `${rec.first_name || ""} ${rec.last_name || ""}`.trim() || rec.employee_name || "UNKNOWN";
@@ -235,7 +220,7 @@ export const fieldAttendanceRoute = new Elysia({ prefix: "/api/field-attendance"
 
     return { success: true, count: records.length };
   }, {
-    beforeHandle: fieldAttendanceAccess,
+    beforeHandle: fieldAttendanceWriteAccess,
     body: t.Object({
       date: t.String(),
       records: t.Array(t.Any())

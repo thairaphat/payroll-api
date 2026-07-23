@@ -164,7 +164,8 @@ function buildPayrollSql(
   range: PayrollDateRange,
   includeDraft: boolean,
   employeeCode?: string,
-  companyId?: number | null
+  companyId?: number | null,
+  companyCodes?: string[]
 ) {
   const approvalFragment = includeDraft
     ? Prisma.empty
@@ -174,12 +175,17 @@ function buildPayrollSql(
       )`;
 
   const employeeFragment = employeeCode
-    ? Prisma.sql`AND COALESCE(m.emp_code, a.employee_code) = ${employeeCode}`
+    ? Prisma.sql`AND a.employee_code = ${employeeCode}`
     : Prisma.empty;
 
   const limitFragment = employeeCode ? Prisma.sql`LIMIT 1` : Prisma.empty;
 
   const companyFragment = companySqlFragment(companyId ?? null);
+  const companyCodeFragment = companyCodes
+    ? companyCodes.length > 0
+      ? Prisma.sql`AND a.employee_code IN (${Prisma.join(companyCodes)})`
+      : Prisma.sql`AND 1 = 0`
+    : Prisma.empty;
 
   return Prisma.sql`
     SELECT
@@ -188,7 +194,7 @@ function buildPayrollSql(
       -- per group and works on the 1:1 joined rows here. Both m.emp_code
       -- (UNIQUE JOIN) and a.employee_code are wrapped — any column not directly
       -- listed as a GROUP BY key must be inside an aggregate.
-      COALESCE(MAX(m.emp_code), MAX(a.employee_code)) AS employee_code,
+       MAX(a.employee_code) AS employee_code,
 
       -- Name fallback chain (DB level):
       --   1. a.employee_name if not blank  (a.employee_name is a GROUP BY key — raw OK)
@@ -201,7 +207,7 @@ function buildPayrollSql(
         NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_th), ''), ' ', COALESCE(MAX(e.last_name_th), ''))), ''),
         NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_en), ''), ' ', COALESCE(MAX(e.last_name_en), ''))), ''),
         NULLIF(TRIM(CONCAT(MAX(e.first_name), ' ', MAX(e.last_name))), ''),
-        COALESCE(MAX(m.emp_code), MAX(a.employee_code))
+         MAX(a.employee_code)
       )                                      AS employee_name,
 
       a.branch_code                          AS branch_code,
@@ -220,8 +226,7 @@ function buildPayrollSql(
       COALESCE(MAX(e.debt_amount), 0)        AS deduction_amount
 
     FROM attendance_records a
-    LEFT JOIN employee_code_mapping m ON a.employee_code = m.sheet_employee_code
-    LEFT JOIN employee_document_profiles e ON COALESCE(m.emp_code, a.employee_code) = e.emp_code
+    INNER JOIN employee_document_profiles e ON a.employee_code = e.emp_code
     WHERE a.is_present = 1
       ${approvalFragment}
       AND a.work_date BETWEEN ${toDate(range.startDate)} AND ${toDate(range.endDate)}
@@ -230,7 +235,8 @@ function buildPayrollSql(
       AND a.employee_name <> ${TEST_EMPLOYEE_NAME}
       ${employeeFragment}
       ${companyFragment}
-    GROUP BY COALESCE(m.emp_code, a.employee_code), a.employee_name, a.branch_code
+      ${companyCodeFragment}
+    GROUP BY a.employee_code, a.employee_name, a.branch_code
     ORDER BY employee_code ASC
     ${limitFragment}
   `;
@@ -291,6 +297,9 @@ export const getPayrollSummary = async (
 ) => {
   validateDateRange(range);
 
+  const companyCodes = companyId != null ? await getCompanyEmployeeCodes(companyId) : undefined;
+  if (companyId != null && companyCodes?.length === 0) return [];
+
   // Serve from immutable snapshot if the period has been locked.
   if (!includeDraft) {
     const lockKey = `${range.startDate}_${range.endDate}`;
@@ -298,9 +307,7 @@ export const getPayrollSummary = async (
     // Apply company scope to snapshot lookup when user is company-scoped
     const snapshotWhere: any = { lock_key: lockKey };
     if (companyId != null) {
-      const codes = await getCompanyEmployeeCodes(companyId);
-      if (codes.length === 0) return [];
-      snapshotWhere.employee_code = { in: codes };
+      snapshotWhere.employee_code = { in: companyCodes! };
     }
 
     const snapshots = await prisma.payroll_snapshots.findMany({
@@ -319,7 +326,7 @@ export const getPayrollSummary = async (
   }
 
   // Live calculation — resolve company_id per employee then apply company wage.
-  const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, includeDraft, undefined, companyId));
+  const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, includeDraft, undefined, companyId, companyCodes));
 
   if (process.env.NODE_ENV !== "production" && rows.length > 0) {
     const sample = rows[0];
@@ -346,13 +353,12 @@ export const getPayrollByEmployeeCode = async (
 ) => {
   validateDateRange(range);
 
+  const companyCodes = companyId != null ? await getCompanyEmployeeCodes(companyId) : undefined;
+  if (companyId != null && !companyCodes?.includes(employeeCode)) return null;
+
   if (!includeDraft) {
     const lockKey = `${range.startDate}_${range.endDate}`;
     // For scoped users: verify the requested employee belongs to their company
-    if (companyId != null) {
-      const codes = await getCompanyEmployeeCodes(companyId);
-      if (!codes.includes(employeeCode)) return null; // out of scope → not found
-    }
     const snap = await prisma.payroll_snapshots.findFirst({
       where: { lock_key: lockKey, employee_code: employeeCode },
     });
@@ -362,7 +368,7 @@ export const getPayrollByEmployeeCode = async (
   }
 
   const rows = await prisma.$queryRaw<any[]>(
-    buildPayrollSql(range, includeDraft, employeeCode, companyId)
+    buildPayrollSql(range, includeDraft, employeeCode, companyId, companyCodes)
   );
 
   if (rows.length === 0) return null;
@@ -380,9 +386,11 @@ export const getPayrollByEmployeeCode = async (
  * Each returned row includes daily_wage_used / work_hours_used so the snapshot
  * records the exact per-company rate applied — not a single global rate.
  */
-export const getPayrollSummaryLive = async (range: PayrollDateRange) => {
+export const getPayrollSummaryLive = async (range: PayrollDateRange, companyId: number) => {
   validateDateRange(range);
-  const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, false));
+  const companyCodes = await getCompanyEmployeeCodes(companyId);
+  if (companyCodes.length === 0) return [];
+  const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, false, undefined, companyId, companyCodes));
   const wageMap = await getWageConfigsForCompanies(
     rows.map((r: any) => r.company_id ?? null)
   );

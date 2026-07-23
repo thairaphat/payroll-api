@@ -36,6 +36,7 @@ export type PayrollSummaryParams = {
   startDate?: string;
   endDate?: string;
   includeDraft?: boolean;
+  companyId?: number;
 };
 
 export async function fetchPayrollSummary(params: PayrollSummaryParams = {}) {
@@ -43,6 +44,7 @@ export async function fetchPayrollSummary(params: PayrollSummaryParams = {}) {
   if (params.startDate) query.set("startDate", params.startDate);
   if (params.endDate) query.set("endDate", params.endDate);
   if (params.includeDraft) query.set("includeDraft", "true");
+  if (params.companyId != null) query.set("companyId", String(params.companyId));
 
   const res = await authFetch(`${API_URL}/payroll${query.toString() ? `?${query}` : ""}`);
   const json = await res.json();

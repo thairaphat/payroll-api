@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Plus, Search, Users, Loader2, Save, RefreshCw } from "lucide-react";
+import { Plus, Search, Users, Loader2, Save } from "lucide-react";
 
 import { useState } from "react";
 import { formatTHB } from "@/services/payroll.service";
@@ -12,9 +12,10 @@ import {
   fetchEmployees,
   getCompanies,
   addManualEmployee,
-  syncEmployeeMaster,
 } from "@/services/employee.service";
 import { toast } from "sonner";
+import { useAuth } from "@/store/auth";
+import { hasRole } from "@/lib/authz";
 import {
   Dialog,
   DialogContent,
@@ -43,15 +44,15 @@ type Employee = {
   debt_amount: number | string | null;
 };
 
-// Google Sheet "employee master" — แยกจากชีต attendance โดยสิ้นเชิง
-const MASTER_SHEET_ID = "1fhFqtkcdpGdnKGeP_JhpPv2P5EaWvptrK9Hjdc1qP0";
+type Company = { id: number; company_name: string };
 
 export default function Employees() {
   const queryClient = useQueryClient();
+  const user = useAuth((state) => state.user);
+  const isCydAdmin = hasRole(user?.role, "cyd_admin");
+  const [selectedCompanyId, setSelectedCompanyId] = useState("");
   const [q, setQ] = useState("");
-
-  // --- Employee Master Sync State ---
-  const [syncingMaster, setSyncingMaster] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("all");
 
   // --- Add Employee State ---
   const [addOpen, setAddOpen] = useState(false);
@@ -61,17 +62,22 @@ export default function Employees() {
   const [companyId, setCompanyId] = useState("");
   const [adding, setAdding] = useState(false);
 
-  const { data: employees = [], isLoading, isError } = useQuery({
-    queryKey: ["employees"],
-    queryFn: fetchEmployees,
+  const { data: employeeData, isLoading, isError } = useQuery({
+    queryKey: ["employees", selectedCompanyId],
+    queryFn: () => fetchEmployees(isCydAdmin ? Number(selectedCompanyId) : undefined),
+    enabled: !isCydAdmin || Boolean(selectedCompanyId),
   });
 
-  const { data: allCompanies = [] } = useQuery({
+  const { data: companyData } = useQuery({
     queryKey: ["companies"],
     queryFn: getCompanies,
   });
 
+  const employees: Employee[] = Array.isArray(employeeData) ? employeeData : [];
+  const allCompanies: Company[] = Array.isArray(companyData) ? companyData : [];
+
   const filtered = employees.filter((e) => {
+    if (statusFilter !== "all" && e.employment_status !== statusFilter) return false;
     const keyword = q.toLowerCase();
     const names = [e.first_name_th, e.last_name_th, e.first_name, e.last_name]
       .filter(Boolean).join(" ").toLowerCase();
@@ -89,26 +95,6 @@ export default function Employees() {
 
   const totalDebt = employees.reduce((acc, emp) => acc + Number(emp.debt_amount || 0), 0);
   const statusCount = new Set(employees.map((e) => e.employment_status).filter(Boolean)).size;
-
-  const handleSyncMaster = async () => {
-    try {
-      setSyncingMaster(true);
-      const res = await syncEmployeeMaster(MASTER_SHEET_ID);
-      toast.success(
-        `ซิงค์รายชื่อสำเร็จ — เพิ่ม ${res.inserted} | อัปเดต ${res.updated} | ข้าม ${res.skipped}`
-      );
-      if (res.errors && res.errors.length > 0) {
-        const preview = res.errors.slice(0, 3).join(" • ");
-        toast.warning(
-          `มี ${res.errors.length} แถวถูกข้าม: ${preview}${res.errors.length > 3 ? " …" : ""}`
-        );
-      }
-    } catch (error: any) {
-      toast.error(error.message || "ซิงค์รายชื่อพนักงานไม่สำเร็จ");
-    } finally {
-      setSyncingMaster(false);
-    }
-  };
 
   const handleAddSubmit = async () => {
     if (!empCode || !firstName || !lastName) {
@@ -134,11 +120,12 @@ export default function Employees() {
         setCompanyId("");
         queryClient.invalidateQueries({ queryKey: ["employees"] });
       }
-    } catch (error: any) {
-      if (error.message.includes("มีอยู่แล้ว")) {
-        toast.warning(error.message);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : "เพิ่มพนักงานไม่สำเร็จ";
+      if (message.includes("มีอยู่แล้ว")) {
+        toast.warning(message);
       } else {
-        toast.error(error.message || "เพิ่มพนักงานไม่สำเร็จ");
+        toast.error(message);
       }
     } finally {
       setAdding(false);
@@ -175,29 +162,7 @@ export default function Employees() {
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-            {/* Sync Employee Master — นำเข้ารายชื่อจาก Google Sheet (แยกจาก Attendance Sync) */}
-            <Button
-              onClick={handleSyncMaster}
-              disabled={syncingMaster}
-              size="lg"
-              variant="outline"
-              title="ซิงค์รายชื่อพนักงานจาก Google Sheet"
-              className="rounded-2xl border-[#2563eb] text-[#1e40af] hover:bg-[#eef4ff] shadow-sm transition-all duration-300 w-full sm:w-auto"
-            >
-              {syncingMaster ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <RefreshCw className="h-4 w-4 mr-2" />
-              )}
-              <span className="flex flex-col items-start leading-tight text-left">
-                <span className="font-semibold">Sync Employee Master</span>
-                <span className="text-[10px] opacity-80">
-                  ซิงค์รายชื่อพนักงานจาก Google Sheet
-                </span>
-              </span>
-            </Button>
-
+          {!isCydAdmin && <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
             <Button
               onClick={() => setAddOpen(true)}
               size="lg"
@@ -206,8 +171,18 @@ export default function Employees() {
               <Plus className="h-4 w-4 mr-2" />
               เพิ่มพนักงาน
             </Button>
-          </div>
+          </div>}
         </header>
+
+        {isCydAdmin && (
+          <Card className="p-4 rounded-2xl border-blue-200">
+            <Label htmlFor="company-scope">บริษัทที่ต้องการตรวจสอบ</Label>
+            <select id="company-scope" value={selectedCompanyId} onChange={(event) => setSelectedCompanyId(event.target.value)} className="mt-2 w-full h-11 px-3 rounded-xl border">
+              <option value="">เลือกบริษัท</option>
+              {allCompanies.map((company) => <option key={company.id} value={company.id}>{company.company_name}</option>)}
+            </select>
+          </Card>
+        )}
 
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
           <Card className="rounded-3xl bg-gradient-to-r from-[#2563eb] to-[#1e40af] text-white p-5 lg:p-6 shadow-xl">
@@ -244,6 +219,18 @@ export default function Employees() {
                 className="pl-11 h-11 sm:h-12 rounded-2xl border-[#dbe4f0] bg-[#f8fbff] text-[#0f172a]"
               />
             </div>
+
+            <select
+              aria-label="Employment status"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              className="h-11 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-3 text-sm"
+            >
+              <option value="all">ทุกสถานะ</option>
+              {[...new Set(employees.map((employee) => employee.employment_status).filter((status): status is string => Boolean(status)))].map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
 
             <div className="text-sm text-[#64748b]">
               พบทั้งหมด{" "}
@@ -359,7 +346,9 @@ export default function Employees() {
                 ) : (
                   <tr>
                     <td colSpan={6} className="py-10 text-center text-[#64748b]">
-                      ไม่พบข้อมูลพนักงาน
+                      {isCydAdmin && selectedCompanyId
+                        ? "ไม่พบข้อมูลพนักงานในบริษัทนี้"
+                        : "ไม่พบข้อมูลพนักงาน"}
                     </td>
                   </tr>
                 )}
@@ -420,7 +409,7 @@ export default function Employees() {
                 className="w-full h-12 px-4 rounded-xl border border-slate-200 bg-white font-medium focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
               >
                 <option value="">เลือกบริษัท...</option>
-                {allCompanies.map((c: any) => (
+                {allCompanies.map((c) => (
                   <option key={c.id} value={c.id}>{c.company_name}</option>
                 ))}
               </select>

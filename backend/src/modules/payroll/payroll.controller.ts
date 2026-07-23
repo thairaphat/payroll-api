@@ -5,7 +5,7 @@ import {
   type PayrollDateRange,
 } from "./payroll.service";
 import { getAuthUser } from "../../middlewares/auth.middleware";
-import { getCompanyScope } from "../../services/company-scope.service";
+import { CompanyScopeError, resolveCompanyScope } from "../../services/company-scope.service";
 import { logRouteEnter, logApiError } from "../../diag";
 
 function currentMonthRange(): PayrollDateRange {
@@ -34,10 +34,16 @@ export const payrollSummaryController = async (context: Context) => {
   const user = await getAuthUser(context.request, (context as any).jwt);
   logRouteEnter("/payroll", user);
 
-  const scope = user ? getCompanyScope(user) : "deny";
-  if (scope === "deny") {
-    (context as any).set.status = 403;
-    return { success: false, message: "No company assigned to your account. Contact your administrator." };
+  if (!user) { (context as any).set.status = 401; return { success: false, message: "Authentication required" }; }
+  let scope: number;
+  try {
+    scope = await resolveCompanyScope(user, context.query?.companyId as string | undefined, {
+      endpoint: "/payroll", method: "GET",
+      requestId: context.request.headers.get("x-request-id") ?? crypto.randomUUID(),
+    });
+  } catch (error) {
+    if (error instanceof CompanyScopeError) { (context as any).set.status = error.status; return { success: false, message: error.message }; }
+    throw error;
   }
 
   const includeDraftParam = context.query?.includeDraft === "true";
@@ -49,7 +55,7 @@ export const payrollSummaryController = async (context: Context) => {
 
   let data: any;
   try {
-    data = await getPayrollSummary(range, includeDraft, scope !== null ? scope : undefined);
+    data = await getPayrollSummary(range, includeDraft, scope);
     console.log(`[payroll] step=getPayrollSummary rowCount=${Array.isArray(data) ? data.length : "?"}`);
   } catch (err) {
     logApiError("/payroll", user, err, `step=getPayrollSummary startDate=${range.startDate} endDate=${range.endDate} companyId=${scope}`);
@@ -73,10 +79,16 @@ export const payrollByEmployeeController = async (context: Context) => {
   }
 
   const user = await getAuthUser(context.request, (context as any).jwt);
-  const scope = user ? getCompanyScope(user) : "deny";
-  if (scope === "deny") {
-    (context as any).set.status = 403;
-    return { success: false, message: "No company assigned to your account. Contact your administrator." };
+  if (!user) { (context as any).set.status = 401; return { success: false, message: "Authentication required" }; }
+  let scope: number;
+  try {
+    scope = await resolveCompanyScope(user, context.query?.companyId as string | undefined, {
+      endpoint: "/payroll/:employeeCode", method: "GET",
+      requestId: context.request.headers.get("x-request-id") ?? crypto.randomUUID(),
+    });
+  } catch (error) {
+    if (error instanceof CompanyScopeError) { (context as any).set.status = error.status; return { success: false, message: error.message }; }
+    throw error;
   }
 
   const includeDraftParam = context.query?.includeDraft === "true";
@@ -84,7 +96,7 @@ export const payrollByEmployeeController = async (context: Context) => {
   const includeDraft = includeDraftParam && canSeeDraft;
 
   const range = getRangeFromQuery(context.query);
-  const data = await getPayrollByEmployeeCode(employeeCode, range, includeDraft, scope !== null ? scope : undefined);
+  const data = await getPayrollByEmployeeCode(employeeCode, range, includeDraft, scope);
 
   if (!data) {
     context.set.status = 404;

@@ -39,12 +39,15 @@ function buildScopeWhere(input: DateRangeInput) {
   };
 }
 
-export async function submitAttendance(input: DateRangeInput, user: AuthUser) {
+export async function submitAttendance(input: DateRangeInput, user: AuthUser, companyId: number) {
+  const codes = await getCompanyEmployeeCodes(companyId);
+  if (codes.length === 0) throw new Error("No employees are available in this company scope.");
   const result = await prisma.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
       approval_status: APPROVAL_STATUS.DRAFT,
       payroll_locked_at: null,
+      employee_code: { in: codes },
       ...(user.role === "field_staff" ? { created_by: Number(user.id) } : {}),
     },
     data: {
@@ -59,12 +62,15 @@ export async function submitAttendance(input: DateRangeInput, user: AuthUser) {
   return { success: true, updated: result.count };
 }
 
-export async function approveAttendance(input: DateRangeInput, user: AuthUser) {
+export async function approveAttendance(input: DateRangeInput, user: AuthUser, companyId: number) {
+  const codes = await getCompanyEmployeeCodes(companyId);
+  if (codes.length === 0) throw new Error("No employees are available in this company scope.");
   const result = await prisma.attendance_records.updateMany({
     where: {
       ...buildScopeWhere(input),
       approval_status: APPROVAL_STATUS.SUBMITTED,
       payroll_locked_at: null,
+      employee_code: { in: codes },
     },
     data: {
       approval_status: APPROVAL_STATUS.APPROVED,
