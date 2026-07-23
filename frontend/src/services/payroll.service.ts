@@ -39,6 +39,32 @@ export type PayrollSummaryParams = {
   companyId?: number;
 };
 
+export class PayrollApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+    public readonly companyId?: number
+  ) {
+    super(message);
+    this.name = "PayrollApiError";
+  }
+}
+
+export function isWageNotConfiguredError(error: unknown): error is PayrollApiError {
+  if (!(error instanceof PayrollApiError) || error.status !== 422) return false;
+  return (
+    error.code === "COMPANY_WAGE_NOT_CONFIGURED" ||
+    error.code === "WAGE_CONFIG_NOT_FOUND" ||
+    error.message.includes("Active wage configuration is required")
+  );
+}
+
+export function payrollQueryRetry(failureCount: number, error: unknown) {
+  if (isWageNotConfiguredError(error)) return false;
+  return failureCount < 1;
+}
+
 export async function fetchPayrollSummary(params: PayrollSummaryParams = {}) {
   const query = new URLSearchParams();
   if (params.startDate) query.set("startDate", params.startDate);
@@ -47,9 +73,16 @@ export async function fetchPayrollSummary(params: PayrollSummaryParams = {}) {
   if (params.companyId != null) query.set("companyId", String(params.companyId));
 
   const res = await authFetch(`${API_URL}/payroll${query.toString() ? `?${query}` : ""}`);
-  const json = await res.json();
-  if (!res.ok || !json.success) {
-    throw new Error("Failed to load payroll");
+  const json = await res.json().catch(() => null);
+  if (!res.ok || !json?.success) {
+    throw new PayrollApiError(
+      json?.message ?? "Failed to load payroll",
+      res.status,
+      typeof json?.code === "string" ? json.code : undefined,
+      Number.isSafeInteger(Number(json?.companyId))
+        ? Number(json.companyId)
+        : undefined
+    );
   }
   return json.data ?? [];
 }

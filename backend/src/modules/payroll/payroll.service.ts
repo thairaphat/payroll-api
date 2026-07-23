@@ -1,16 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../db";
-import { DAILY_WAGE, WORK_HOURS } from "../../constants/payroll";
 import {
   APPROVAL_STATUS,
   TEST_CODE_PREFIX_FIELD,
   TEST_CODE_PREFIX_MVP,
   TEST_EMPLOYEE_NAME,
 } from "../../constants/attendance";
-import {
-  getWageConfigsForCompanies,
-  type WageConfig,
-} from "../../services/wage-config.service";
+import { getActiveWageConfig, type WageConfig } from "../../services/wage-config.service";
 import { companySqlFragment, getCompanyEmployeeCodes } from "../../services/company-scope.service";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -66,56 +62,42 @@ function normalizeSqlRow(row: Record<string, unknown>): Record<string, unknown> 
 /**
  * Applies per-company wage to a raw SQL row and computes all income fields.
  *
- * Income formula (mirrors the old SQL calculations):
- *   base_income  = work_days × daily_wage
- *   ot15_income  = total_ot15 × (daily_wage / work_hours) × 1.5
- *   ot2_income   = total_ot2  × (daily_wage / work_hours) × 2
- *   gross_income = base_income + ot15_income + ot2_income
+ * Income uses the selected company's exact Decimal configuration:
+ * base + OT1 + OT1.5 + OT2. Attendance has no independent OT3 field,
+ * so OT3 is intentionally not calculated yet.
  *
  * Also attaches daily_wage_used / work_hours_used so snapshot save records the
  * exact rate applied to each employee, not a single global rate.
  */
-function applyWageToRow<T extends Record<string, unknown>>(row: T, wage: WageConfig): T & {
+export function applyWageToRow<T extends Record<string, unknown>>(row: T, wage: WageConfig): T & {
   base_income: number;
+  ot1_income: number;
   ot15_income: number;
   ot2_income: number;
   gross_income: number;
   daily_wage_used: number;
   work_hours_used: number;
 } {
-  const workDays = num(row.work_days);
-  const ot15 = num(row.total_ot15);
-  const ot2 = num(row.total_ot2);
-  const hourlyRate = wage.daily_wage / wage.work_hours;
-  const base_income = workDays * wage.daily_wage;
-  const ot15_income = ot15 * hourlyRate * 1.5;
-  const ot2_income = ot2 * hourlyRate * 2;
-  const gross_income = base_income + ot15_income + ot2_income;
+  const workDays = new Prisma.Decimal(num(row.work_days));
+  const ot1 = new Prisma.Decimal(num(row.total_ot1));
+  const ot15 = new Prisma.Decimal(num(row.total_ot15));
+  const ot2 = new Prisma.Decimal(num(row.total_ot2));
+  const hourlyRate = wage.daily_wage.div(wage.work_hours_per_day);
+  const baseIncome = workDays.mul(wage.daily_wage);
+  const ot1Income = ot1.mul(hourlyRate).mul(wage.ot1_multiplier);
+  const ot15Income = ot15.mul(hourlyRate).mul(wage.ot15_multiplier);
+  const ot2Income = ot2.mul(hourlyRate).mul(wage.ot2_multiplier);
+  const grossIncome = baseIncome.plus(ot1Income).plus(ot15Income).plus(ot2Income);
   return {
     ...row,
-    base_income,
-    ot15_income,
-    ot2_income,
-    gross_income,
-    daily_wage_used: wage.daily_wage,
-    work_hours_used: wage.work_hours,
+    base_income: baseIncome.toNumber(),
+    ot1_income: ot1Income.toNumber(),
+    ot15_income: ot15Income.toNumber(),
+    ot2_income: ot2Income.toNumber(),
+    gross_income: grossIncome.toNumber(),
+    daily_wage_used: wage.daily_wage.toNumber(),
+    work_hours_used: wage.work_hours_per_day.toNumber(),
   } as any;
-}
-
-/**
- * Picks the right WageConfig for a row from the pre-loaded wage map.
- * Falls back: company-specific → global (null key) → hardcoded constant.
- */
-function resolveWageForRow(
-  row: Record<string, unknown>,
-  wageMap: Map<number | null, WageConfig>
-): WageConfig {
-  const companyId = row.company_id != null ? Number(row.company_id) : null;
-  return (
-    wageMap.get(companyId) ??
-    wageMap.get(null) ??
-    { daily_wage: DAILY_WAGE, work_hours: WORK_HOURS }
-  );
 }
 
 function withDeductionBreakdown<T extends Record<string, unknown>>(row: T) {
@@ -247,6 +229,15 @@ function buildPayrollSql(
  * Snapshot rows already have pre-computed income fields (base_income, gross_income etc.)
  * captured at lock time with the per-company wage that was active then.
  */
+export function deriveSnapshotOt1Income(snap: any) {
+  return (
+    Number(snap.gross_income ?? snap.grossIncome ?? 0) -
+    Number(snap.base_income ?? snap.baseIncome ?? 0) -
+    Number(snap.ot15_income ?? snap.ot15Income ?? 0) -
+    Number(snap.ot2_income ?? snap.ot2Income ?? 0)
+  );
+}
+
 function formatSnapshotAsPayrollRow(snap: any) {
   const empCode = snap.employee_code ?? snap.employeeCode ?? "";
   const rawName = snap.employee_name ?? snap.employeeName ?? "";
@@ -263,6 +254,10 @@ function formatSnapshotAsPayrollRow(snap: any) {
     total_ot2: Number(snap.total_ot2 ?? snap.totalOt2 ?? 0),
     total_ot_hours: Number(snap.total_ot_hours ?? snap.totalOtHours ?? 0),
     base_income: Number(snap.base_income ?? snap.baseIncome ?? 0),
+    // The existing snapshot table has no ot1_income column. Derive the immutable
+    // amount from its stored gross/base/OT1.5/OT2 totals without consulting a
+    // current wage config that may have changed since the lock.
+    ot1_income: deriveSnapshotOt1Income(snap),
     ot15_income: Number(snap.ot15_income ?? snap.ot15Income ?? 0),
     ot2_income: Number(snap.ot2_income ?? snap.ot2Income ?? 0),
     gross_income: Number(snap.gross_income ?? snap.grossIncome ?? 0),
@@ -276,16 +271,15 @@ function formatSnapshotAsPayrollRow(snap: any) {
 }
 
 /**
- * Applies the per-company wage map to a batch of raw SQL rows and returns
+ * Applies the required company wage to a batch of raw SQL rows and returns
  * fully-enriched payroll rows ready for the API response or snapshot save.
  */
 function enrichRows(
   rows: any[],
-  wageMap: Map<number | null, WageConfig>
+  wage: WageConfig
 ): ReturnType<typeof withDeductionBreakdown>[] {
   return rows.map((row) => {
     const safe = normalizeSqlRow(row);
-    const wage = resolveWageForRow(safe, wageMap);
     return withDeductionBreakdown(applyWageToRow(safe, wage));
   });
 }
@@ -296,9 +290,13 @@ export const getPayrollSummary = async (
   companyId?: number | null
 ) => {
   validateDateRange(range);
+  if (companyId == null) {
+    throw new Error("companyId is required for payroll calculation");
+  }
+  const wage = await getActiveWageConfig(companyId);
 
-  const companyCodes = companyId != null ? await getCompanyEmployeeCodes(companyId) : undefined;
-  if (companyId != null && companyCodes?.length === 0) return [];
+  const companyCodes = await getCompanyEmployeeCodes(companyId);
+  if (companyCodes.length === 0) return [];
 
   // Serve from immutable snapshot if the period has been locked.
   if (!includeDraft) {
@@ -306,9 +304,7 @@ export const getPayrollSummary = async (
 
     // Apply company scope to snapshot lookup when user is company-scoped
     const snapshotWhere: any = { lock_key: lockKey };
-    if (companyId != null) {
-      snapshotWhere.employee_code = { in: companyCodes! };
-    }
+    snapshotWhere.employee_code = { in: companyCodes };
 
     const snapshots = await prisma.payroll_snapshots.findMany({
       where: snapshotWhere,
@@ -338,11 +334,7 @@ export const getPayrollSummary = async (
     );
   }
 
-  const wageMap = await getWageConfigsForCompanies(
-    rows.map((r: any) => r.company_id ?? null)
-  );
-
-  return enrichRows(rows, wageMap);
+  return enrichRows(rows, wage);
 };
 
 export const getPayrollByEmployeeCode = async (
@@ -352,9 +344,13 @@ export const getPayrollByEmployeeCode = async (
   companyId?: number | null
 ) => {
   validateDateRange(range);
+  if (companyId == null) {
+    throw new Error("companyId is required for payroll calculation");
+  }
+  const wage = await getActiveWageConfig(companyId);
 
-  const companyCodes = companyId != null ? await getCompanyEmployeeCodes(companyId) : undefined;
-  if (companyId != null && !companyCodes?.includes(employeeCode)) return null;
+  const companyCodes = await getCompanyEmployeeCodes(companyId);
+  if (!companyCodes.includes(employeeCode)) return null;
 
   if (!includeDraft) {
     const lockKey = `${range.startDate}_${range.endDate}`;
@@ -374,8 +370,6 @@ export const getPayrollByEmployeeCode = async (
   if (rows.length === 0) return null;
 
   const safe = normalizeSqlRow(rows[0]);
-  const wageMap = await getWageConfigsForCompanies([safe.company_id as number | null ?? null]);
-  const wage = resolveWageForRow(safe, wageMap);
   return withDeductionBreakdown(applyWageToRow(safe, wage));
 };
 
@@ -388,11 +382,9 @@ export const getPayrollByEmployeeCode = async (
  */
 export const getPayrollSummaryLive = async (range: PayrollDateRange, companyId: number) => {
   validateDateRange(range);
+  const wage = await getActiveWageConfig(companyId);
   const companyCodes = await getCompanyEmployeeCodes(companyId);
   if (companyCodes.length === 0) return [];
   const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, false, undefined, companyId, companyCodes));
-  const wageMap = await getWageConfigsForCompanies(
-    rows.map((r: any) => r.company_id ?? null)
-  );
-  return enrichRows(rows, wageMap);
+  return enrichRows(rows, wage);
 };

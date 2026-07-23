@@ -40,8 +40,7 @@ const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 const OT_TYPE_OPTIONS = [
   { label: "OT 1", field: "ot1" },
   { label: "OT 1.5", field: "ot15" },
-  // TODO: Add real ot3 storage in DB/backend; temporarily maps OT 3 to ot2.
-  { label: "OT 3", field: "ot2" },
+  { label: "OT 2", field: "ot2" },
 ];
 
 export default function FieldAttendanceEntry() {

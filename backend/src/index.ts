@@ -8,6 +8,7 @@ import { employeeRoute } from "./modules/employees/employee.route";
 import { dashboardRoute } from "./modules/dashboard/dashboard.route";
 import { authRoute } from "./modules/auth/auth.route";
 import { userManagementRoute } from "./modules/users/user-management.route";
+import { companyWageRoute } from "./modules/company-wages/company-wage.route";
 import { prisma } from "./db";
 import { maskDatabaseUrl, extractJwtContext } from "./diag";
 
@@ -69,6 +70,7 @@ const app = new Elysia()
   .use(payrollRoute)
   .use(dashboardRoute)
   .use(userManagementRoute)
+  .use(companyWageRoute)
 
   .onError(({ code, error, set, request }) => {
     const url = new URL(request.url).pathname;

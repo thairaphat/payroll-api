@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+  assertAllConfiguredCompaniesExist,
+  DEVELOPMENT_COMPANY_IDS,
   findMissingCompanyIds,
   formatSeedUserLog,
   resolveSeedConfiguration,
@@ -32,13 +34,60 @@ describe("development seed defaults", () => {
       isActive: true,
       updatePassword: false,
     });
-    expect(config.companyUsers.map((user) => [user.username, user.role, user.companyId])).toEqual([
-      ["admindynamic", "admin", 25],
-      ["hrdynamic", "hr", 25],
-      ["accountingdynamic", "accounting", 25],
-      ["fielddynamic", "field_staff", 25],
-      ["viewerdynamic", "viewer", 25],
+    expect(config.companyUsers).toHaveLength(65);
+  });
+
+  it("generates five canonical company users for each of the 13 companies", () => {
+    const config = resolveSeedConfiguration({ NODE_ENV: "development" });
+    expect(DEVELOPMENT_COMPANY_IDS).toEqual([
+      16, 18, 21, 22, 23, 24, 25, 31, 37, 38, 39, 40, 41,
     ]);
+    for (const companyId of DEVELOPMENT_COMPANY_IDS) {
+      const users = config.companyUsers.filter((user) => user.companyId === companyId);
+      expect(users).toHaveLength(5);
+      expect(users.map((user) => user.role)).toEqual([
+        "admin", "hr", "accounting", "field_staff", "viewer",
+      ]);
+      expect(users.map((user) => user.username)).toEqual([
+        `admin${companyId}`,
+        `hr${companyId}`,
+        `accounting${companyId}`,
+        `field${companyId}`,
+        `viewer${companyId}`,
+      ]);
+      for (const user of users) {
+        expect(user.email).toBe(`${user.username}@payroll.local`);
+        expect(user.companyId).toBe(companyId);
+        expect(user.updatePassword).toBe(false);
+      }
+    }
+  });
+
+  it("generates unique usernames and emails across all development users", () => {
+    const config = resolveSeedConfiguration({ NODE_ENV: "development" });
+    const allUsers = [config.cydAdmin, ...config.companyUsers];
+    expect(new Set(allUsers.map((user) => user.username.toLowerCase())).size).toBe(66);
+    expect(new Set(allUsers.map((user) => user.email.toLowerCase())).size).toBe(66);
+    expect(new Set(allUsers.map((user) => user.password))).toEqual(new Set(["ChangeMe123!"]));
+    expect(config.companyUsers.filter((user) => user.companyId === 39).map((user) => user.email)).toEqual([
+      "admin39@payroll.local",
+      "hr39@payroll.local",
+      "accounting39@payroll.local",
+      "field39@payroll.local",
+      "viewer39@payroll.local",
+    ]);
+  });
+
+  it("keeps the development cyd_admin global and active", () => {
+    const config = resolveSeedConfiguration({ NODE_ENV: "development" });
+    expect(config.cydAdmin).toMatchObject({
+      username: "admincyd",
+      email: "admincyd@payroll.local",
+      role: "cyd_admin",
+      companyId: null,
+      isActive: true,
+      updatePassword: false,
+    });
   });
 
   it("lets environment configuration override development defaults", () => {
@@ -89,12 +138,16 @@ describe("idempotent password and company behavior", () => {
 
   it("detects a missing configured company without creating it", () => {
     expect(findMissingCompanyIds([25, 26, 25], [26])).toEqual([25]);
+    expect(() => assertAllConfiguredCompaniesExist(
+      [...DEVELOPMENT_COMPANY_IDS],
+      DEVELOPMENT_COMPANY_IDS.filter((id) => id !== 39)
+    )).toThrow("Configured company IDs not found: 39");
   });
 
   it("formats logs without password or hash data", () => {
     const user = resolveSeedConfiguration({ NODE_ENV: "development" }).companyUsers[0];
     const output = formatSeedUserLog(user, "skipped");
-    expect(output).toContain("user=admindynamic");
+    expect(output).toContain("user=admin16");
     expect(output).not.toContain(user.password!);
     expect(output.toLowerCase()).not.toContain("hash");
     expect(output.toLowerCase()).not.toContain("password");

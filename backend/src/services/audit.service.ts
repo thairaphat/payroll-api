@@ -14,6 +14,11 @@ export type AuditAction =
   | "USER_ACTIVATED"
   | "USER_DEACTIVATED"
   | "USER_PASSWORD_RESET"
+  | "COMPANY_WAGE_CREATED"
+  | "COMPANY_WAGE_UPDATED"
+  | "COMPANY_WAGE_ACTIVATED"
+  | "COMPANY_WAGE_DEACTIVATED"
+  | "COMPANY_WAGE_ACCESS_DENIED"
   | "employee.auto_created"
   | "employee_master.import";
 
@@ -23,6 +28,7 @@ export type AuditEntityType =
   | "employee"
   | "employee_master_mapping"
   | "company"
+  | "company_wage"
   | "user";
 
 export interface AuditScope {

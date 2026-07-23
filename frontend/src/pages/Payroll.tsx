@@ -31,7 +31,13 @@ import {
   Printer,
 } from "lucide-react";
 
-import { formatTHB, fetchPayrollSummary, lockPayrollPeriod } from "@/services/payroll.service";
+import {
+  formatTHB,
+  fetchPayrollSummary,
+  lockPayrollPeriod,
+  payrollQueryRetry,
+} from "@/services/payroll.service";
+import { PayrollErrorNotice } from "@/components/payroll/PayrollErrorNotice";
 import { getAvailableMonths, getAvailableDates } from "@/services/google-sheet.service";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -510,7 +516,12 @@ export default function Payroll() {
 
   const canSeeAllRecords = userRole === "admin" || userRole === "hr";
 
-  const { data: rows = [], isLoading: loading, isError } = useQuery({
+  const {
+    data: rows = [],
+    isLoading: loading,
+    isError,
+    error: payrollError,
+  } = useQuery({
     queryKey: ["payroll", selectedRange.startDate, selectedRange.endDate, payrollScope, selectedCompanyId],
     queryFn: () => fetchPayrollSummary({
       startDate: selectedRange.startDate,
@@ -519,6 +530,7 @@ export default function Payroll() {
       companyId: isCydAdmin ? Number(selectedCompanyId) : undefined,
     }),
     enabled: !isCydAdmin || Boolean(selectedCompanyId),
+    retry: payrollQueryRetry,
   });
 
   const canLockPayroll = userRole === "admin" || userRole === "accounting";
@@ -604,7 +616,9 @@ export default function Payroll() {
     }
   };
 
-  if (isError) return <div className="p-8"><Card className="p-6 bg-red-50 text-red-700">Error loading payroll</Card></div>;
+  if (isError) {
+    return <PayrollErrorNotice error={payrollError} role={userRole} />;
+  }
 
   return (
     <div className="min-h-screen bg-[#eef2f7] px-4 py-5 sm:px-6 lg:px-8">

@@ -17,7 +17,7 @@ import {
 } from "../../constants/attendance";
 import {
   getActiveWageConfig,
-  getWageConfigsForCompanies,
+  WageConfigError,
 } from "../../services/wage-config.service";
 import { logRouteEnter, logApiError } from "../../diag";
 import { hasEmployeeCodes } from "../../utils/company-scope";
@@ -76,6 +76,7 @@ export const dashboardRoute = new Elysia().get(
           MAX(e.company_id)                    AS company_id,
           COUNT(DISTINCT a.work_date)          AS work_days,
           COALESCE(SUM(a.ot_hours), 0)         AS total_ot,
+          COALESCE(SUM(a.ot1), 0)              AS total_ot1,
           COALESCE(SUM(a.ot15), 0)             AS total_ot15,
           COALESCE(SUM(a.ot2), 0)              AS total_ot2
         FROM attendance_records a
@@ -96,32 +97,55 @@ export const dashboardRoute = new Elysia().get(
     }
 
     // ── 4. Wage config for this company (income calculation) ─────────────────
-    let wageMap: Awaited<ReturnType<typeof getWageConfigsForCompanies>>;
+    let companyWageConfig: Awaited<ReturnType<typeof getActiveWageConfig>> | null;
     try {
-      wageMap = await getWageConfigsForCompanies(
-        rows.map((r: any) => (r.company_id != null ? Number(r.company_id) : null))
-      );
-      console.log(`[dashboard] step=wageConfig wageMapSize=${wageMap.size}`);
+      companyWageConfig = await getActiveWageConfig(companyId);
+      console.log(`[dashboard] step=wageConfig configured=true companyId=${companyId}`);
     } catch (err) {
-      logApiError(ENDPOINT, user, err, "step=wageConfig companyId=" + companyId);
-      throw err;
+      if (
+        err instanceof WageConfigError &&
+        err.code === "COMPANY_WAGE_NOT_CONFIGURED"
+      ) {
+        companyWageConfig = null;
+        console.warn(`[dashboard] step=wageConfig configured=false companyId=${companyId}`);
+      } else {
+        logApiError(ENDPOINT, user, err, "step=wageConfig companyId=" + companyId);
+        throw err;
+      }
     }
 
     const employees = rows.map((r) => {
-      const cId = r.company_id != null ? Number(r.company_id) : null;
-      const wage = wageMap.get(cId) ?? wageMap.get(null)!;
-      const hourlyRate = wage.daily_wage / wage.work_hours;
-
       const workDays = Number(r.work_days ?? 0);
       const ot = Number(r.total_ot ?? 0);
+      const ot1 = Number(r.total_ot1 ?? 0);
       const ot15 = Number(r.total_ot15 ?? 0);
       const ot2 = Number(r.total_ot2 ?? 0);
 
-      // Mirror payroll.service.ts income formula: base + ot1.5 + ot2
-      const totalIncome =
-        workDays * wage.daily_wage +
-        ot15 * hourlyRate * 1.5 +
-        ot2 * hourlyRate * 2;
+      const totalIncome = companyWageConfig
+        ? (() => {
+            const hourlyRate = companyWageConfig.daily_wage.div(
+              companyWageConfig.work_hours_per_day
+            );
+            return new Prisma.Decimal(workDays)
+              .mul(companyWageConfig.daily_wage)
+              .plus(
+                new Prisma.Decimal(ot1)
+                  .mul(hourlyRate)
+                  .mul(companyWageConfig.ot1_multiplier)
+              )
+              .plus(
+                new Prisma.Decimal(ot15)
+                  .mul(hourlyRate)
+                  .mul(companyWageConfig.ot15_multiplier)
+              )
+              .plus(
+                new Prisma.Decimal(ot2)
+                  .mul(hourlyRate)
+                  .mul(companyWageConfig.ot2_multiplier)
+              )
+              .toNumber();
+          })()
+        : 0;
 
       return {
         code: r.employee_code,
@@ -132,16 +156,6 @@ export const dashboardRoute = new Elysia().get(
         totalIncome,
       };
     });
-
-    // Company-specific wage config for the _wage_config display field
-    let companyWageConfig: Awaited<ReturnType<typeof getActiveWageConfig>>;
-    try {
-      companyWageConfig = await getActiveWageConfig(companyId);
-      console.log(`[dashboard] step=companyWageConfig daily_wage=${companyWageConfig.daily_wage} work_hours=${companyWageConfig.work_hours}`);
-    } catch (err) {
-      logApiError(ENDPOINT, user, err, "step=companyWageConfig companyId=" + companyId);
-      throw err;
-    }
 
     // ── 5. Today's field attendance — filtered to company employee codes ──────
     const todayStart = new Date();
@@ -193,10 +207,15 @@ export const dashboardRoute = new Elysia().get(
       notIssuedPayslip: employees.length,
       employees,
       todayFieldEntry,
-      _wage_config: {
-        daily_wage: companyWageConfig.daily_wage,
-        work_hours: companyWageConfig.work_hours,
-      },
+      _wage_config: companyWageConfig
+        ? {
+            daily_wage: companyWageConfig.daily_wage.toFixed(),
+            work_hours: companyWageConfig.work_hours_per_day.toFixed(),
+          }
+        : null,
+      _wage_config_error: companyWageConfig
+        ? null
+        : "COMPANY_WAGE_NOT_CONFIGURED",
     };
   },
   // Allow admin, hr, accounting, viewer — all company-scoped roles

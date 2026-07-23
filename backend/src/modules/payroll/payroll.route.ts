@@ -7,10 +7,7 @@ import { requireRole, getAuthUser } from "../../middlewares/auth.middleware";
 import { getCompanyScope } from "../../services/company-scope.service";
 import { lockPayrollPeriod } from "../attendance/approval.service";
 import { getPayrollSummaryLive, type PayrollDateRange } from "./payroll.service";
-import { getActiveWageConfig } from "../../services/wage-config.service";
-// getActiveWageConfig is still called in the lock handler to capture the global
-// fallback wage in the audit log.  Per-employee wages are now embedded in each
-// payrollRow as daily_wage_used / work_hours_used.
+import { getActiveWageConfig, WageConfigError } from "../../services/wage-config.service";
 import { logAudit } from "../../services/audit.service";
 import { prisma } from "../../db";
 
@@ -55,9 +52,8 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
       }
       const lockCompanyId = lockScope;
 
-      // Step 2: Get global wage config — used only for audit log metadata.
-      // Actual per-employee wages come from each row's daily_wage_used field.
-      const globalWageConfig = await getActiveWageConfig();
+      // Step 2: Fail before locking when this company has no active wage config.
+      const companyWageConfig = await getActiveWageConfig(lockCompanyId);
 
       // Step 3: Calculate payroll BEFORE locking (per-company wages applied internally).
       const payrollRows = await getPayrollSummaryLive(range, lockCompanyId);
@@ -91,8 +87,8 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
           total_ot2: Number(row.total_ot2 ?? 0),
           total_ot_hours: Number(row.total_ot_hours ?? 0),
           // Per-company wage applied to this specific employee row
-          daily_wage_used: Number((row as any).daily_wage_used ?? globalWageConfig.daily_wage),
-          work_hours_used: Number((row as any).work_hours_used ?? globalWageConfig.work_hours),
+          daily_wage_used: Number((row as any).daily_wage_used),
+          work_hours_used: Number((row as any).work_hours_used),
           base_income: Number(row.base_income ?? 0),
           ot15_income: Number(row.ot15_income ?? 0),
           ot2_income: Number(row.ot2_income ?? 0),
@@ -123,9 +119,15 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
         {
           locked_attendance: lockResult.locked,
           snapshots_saved: snapshotsSaved,
-          // Global fallback wage active at lock time (for reference)
-          daily_wage_used: globalWageConfig.daily_wage,
-          work_hours_used: globalWageConfig.work_hours,
+          // Exact company wage active at lock time.
+          company_id: lockCompanyId,
+          wage_config_id: companyWageConfig.id.toString(),
+          daily_wage_used: companyWageConfig.daily_wage.toFixed(),
+          work_hours_used: companyWageConfig.work_hours_per_day.toFixed(),
+          ot1_multiplier: companyWageConfig.ot1_multiplier.toFixed(),
+          ot15_multiplier: companyWageConfig.ot15_multiplier.toFixed(),
+          ot2_multiplier: companyWageConfig.ot2_multiplier.toFixed(),
+          ot3_multiplier: companyWageConfig.ot3_multiplier.toFixed(),
           per_company_wages_applied: true,
         }
       );
@@ -136,9 +138,10 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
         snapshots_saved: snapshotsSaved,
       };
     } catch (error) {
-      set.status = 400;
+      set.status = error instanceof WageConfigError ? error.status : 400;
       return {
         success: false,
+        ...(error instanceof WageConfigError ? { code: error.code } : {}),
         message: error instanceof Error ? error.message : "Lock payroll failed",
       };
     }

@@ -46,6 +46,7 @@ import NotFound from "./pages/NotFound.tsx";
 import AccessDenied from "./pages/AccessDenied";
 import AdminCompanies from "./pages/AdminCompanies";
 import AdminUsers from "./pages/AdminUsers";
+import AdminCompanyWages from "./pages/AdminCompanyWages";
 
 
 /**
@@ -138,6 +139,10 @@ const AppRoutes = () => {
             <Route
               path="/admin/users"
               element={<AdminUsers />}
+            />
+            <Route
+              path="/admin/company-wages"
+              element={<AdminCompanyWages />}
             />
           </Route>
         </Route>

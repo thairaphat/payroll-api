@@ -8,6 +8,18 @@ import {
 
 const DEVELOPMENT_DEFAULT_PASSWORD = "ChangeMe123!";
 
+export const DEVELOPMENT_COMPANY_IDS = [
+  16, 18, 21, 22, 23, 24, 25, 31, 37, 38, 39, 40, 41,
+] as const;
+
+const DEVELOPMENT_COMPANY_USER_ROLES = [
+  { prefix: "admin", role: "admin" },
+  { prefix: "hr", role: "hr" },
+  { prefix: "accounting", role: "accounting" },
+  { prefix: "field", role: "field_staff" },
+  { prefix: "viewer", role: "viewer" },
+] as const;
+
 export type SeedUserConfig = {
   username: string;
   email: string;
@@ -30,18 +42,25 @@ type SeedEnvironment = Partial<Record<
   string
 >>;
 
-export const defaultCompanyUsers = [
-  {
-    companyId: 25,
-    users: [
-      { username: "admindynamic", email: "admindynamic@payroll.local", password: DEVELOPMENT_DEFAULT_PASSWORD, role: "admin", isActive: true },
-      { username: "hrdynamic", email: "hrdynamic@payroll.local", password: DEVELOPMENT_DEFAULT_PASSWORD, role: "hr", isActive: true },
-      { username: "accountingdynamic", email: "accountingdynamic@payroll.local", password: DEVELOPMENT_DEFAULT_PASSWORD, role: "accounting", isActive: true },
-      { username: "fielddynamic", email: "fielddynamic@payroll.local", password: DEVELOPMENT_DEFAULT_PASSWORD, role: "field_staff", isActive: true },
-      { username: "viewerdynamic", email: "viewerdynamic@payroll.local", password: DEVELOPMENT_DEFAULT_PASSWORD, role: "viewer", isActive: true },
-    ],
-  },
-] as const;
+function createDevelopmentCompanyUsers(companyId: number) {
+  return {
+    companyId,
+    users: DEVELOPMENT_COMPANY_USER_ROLES.map(({ prefix, role }) => {
+      const username = `${prefix}${companyId}`;
+      return {
+        username,
+        email: `${username}@payroll.local`,
+        password: DEVELOPMENT_DEFAULT_PASSWORD,
+        role,
+        isActive: true,
+      };
+    }),
+  };
+}
+
+export const defaultCompanyUsers = DEVELOPMENT_COMPANY_IDS.map(
+  createDevelopmentCompanyUsers
+);
 
 type CompanyUsersJson = Array<{
   companyId?: unknown;
@@ -155,6 +174,16 @@ export function shouldHashSeedPassword(existingUser: boolean, user: SeedUserConf
 export function findMissingCompanyIds(configuredIds: number[], existingIds: number[]): number[] {
   const existing = new Set(existingIds);
   return [...new Set(configuredIds)].filter((id) => !existing.has(id));
+}
+
+export function assertAllConfiguredCompaniesExist(
+  configuredIds: number[],
+  existingIds: number[]
+): void {
+  const missingCompanyIds = findMissingCompanyIds(configuredIds, existingIds);
+  if (missingCompanyIds.length > 0) {
+    throw new Error(`Configured company IDs not found: ${missingCompanyIds.join(", ")}`);
+  }
 }
 
 export function formatSeedUserLog(

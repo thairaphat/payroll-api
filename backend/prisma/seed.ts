@@ -5,7 +5,7 @@ import { PrismaMariaDb } from "@prisma/adapter-mariadb";
 
 import { CANONICAL_ROLES, type CanonicalRole } from "../src/utils/user-policy";
 import {
-  findMissingCompanyIds,
+  assertAllConfiguredCompaniesExist,
   formatSeedUserLog,
   resolveSeedConfiguration,
   shouldHashSeedPassword,
@@ -52,10 +52,7 @@ async function main() {
     where: { id: { in: companyIds } },
     select: { id: true },
   });
-  const missingCompanyIds = findMissingCompanyIds(companyIds, companies.map((company) => company.id));
-  if (missingCompanyIds.length) {
-    throw new Error(`Configured company ID not found: ${missingCompanyIds.join(", ")}`);
-  }
+  assertAllConfiguredCompaniesExist(companyIds, companies.map((company) => company.id));
 
   const existingUsers = await prisma.payroll_users.findMany({
     where: {

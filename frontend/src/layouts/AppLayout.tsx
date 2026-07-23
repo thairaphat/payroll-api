@@ -57,6 +57,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     section: "ADMIN",
     items: [
+      { to: "/admin/company-wages", label: "ค่าจ้างรายบริษัท", icon: Banknote, roles: ["cyd_admin"] },
       { to: "/admin/users", label: "จัดการผู้ใช้งาน", icon: UsersRound, roles: ["cyd_admin"] },
       { to: "/employees", label: "พนักงาน", icon: UsersRound, roles: ["cyd_admin", "admin", "hr"] },
     ],

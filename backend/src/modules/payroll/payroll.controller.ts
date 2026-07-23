@@ -7,6 +7,18 @@ import {
 import { getAuthUser } from "../../middlewares/auth.middleware";
 import { CompanyScopeError, resolveCompanyScope } from "../../services/company-scope.service";
 import { logRouteEnter, logApiError } from "../../diag";
+import { WageConfigError } from "../../services/wage-config.service";
+
+export function companyWageErrorPayload(
+  error: WageConfigError,
+  companyId: number
+) {
+  return {
+    code: error.code,
+    message: error.message,
+    companyId,
+  };
+}
 
 function currentMonthRange(): PayrollDateRange {
   const now = new Date();
@@ -59,6 +71,10 @@ export const payrollSummaryController = async (context: Context) => {
     console.log(`[payroll] step=getPayrollSummary rowCount=${Array.isArray(data) ? data.length : "?"}`);
   } catch (err) {
     logApiError("/payroll", user, err, `step=getPayrollSummary startDate=${range.startDate} endDate=${range.endDate} companyId=${scope}`);
+    if (err instanceof WageConfigError) {
+      (context as any).set.status = err.status;
+      return companyWageErrorPayload(err, scope);
+    }
     throw err;
   }
 
@@ -96,7 +112,16 @@ export const payrollByEmployeeController = async (context: Context) => {
   const includeDraft = includeDraftParam && canSeeDraft;
 
   const range = getRangeFromQuery(context.query);
-  const data = await getPayrollByEmployeeCode(employeeCode, range, includeDraft, scope);
+  let data: Awaited<ReturnType<typeof getPayrollByEmployeeCode>>;
+  try {
+    data = await getPayrollByEmployeeCode(employeeCode, range, includeDraft, scope);
+  } catch (error) {
+    if (error instanceof WageConfigError) {
+      (context as any).set.status = error.status;
+      return companyWageErrorPayload(error, scope);
+    }
+    throw error;
+  }
 
   if (!data) {
     context.set.status = 404;
