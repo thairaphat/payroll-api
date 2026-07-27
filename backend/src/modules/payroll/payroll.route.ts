@@ -9,6 +9,7 @@ import {
   PayrollLockError,
 } from "./payroll-lock.service";
 import { WageConfigError } from "../../services/wage-config.service";
+import { PayrollDataIntegrityError } from "./payroll.service";
 
 const payrollLockBody = t.Object({
   date: t.Optional(t.String()),
@@ -36,6 +37,7 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
       } catch (error) {
         if (
           error instanceof PayrollLockError ||
+          error instanceof PayrollDataIntegrityError ||
           error instanceof WageConfigError
         ) {
           set.status = error.status;
@@ -43,6 +45,11 @@ export const payrollRoute = new Elysia({ prefix: "/payroll" })
             success: false,
             code: error.code,
             message: error.message,
+            ...((error instanceof PayrollLockError ||
+              error instanceof PayrollDataIntegrityError) &&
+            error.employeeCodes?.length
+              ? { employeeCodes: error.employeeCodes }
+              : {}),
           };
         }
         throw error;

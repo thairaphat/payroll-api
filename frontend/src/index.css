@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700&display=swap');
-
 @font-face {
   font-family: "Noto Sans Myanmar";
   src: url("/fonts/NotoSansMyanmar-Regular.ttf") format("truetype");
@@ -18,13 +16,9 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
-
 @layer base {
   :root {
-    --background: 210 20% 98%;
+    --background: 187 35% 95%;
     --foreground: 222 47% 11%;
 
     --card: 0 0% 100%;
@@ -33,63 +27,83 @@ All colors MUST be HSL.
     --popover: 0 0% 100%;
     --popover-foreground: 222 47% 11%;
 
-    /* Brand: deep teal — feels professional for HR/Payroll */
-    --primary: 187 92% 24%;
+    --primary: 173 80% 40%;
     --primary-foreground: 0 0% 100%;
-    --primary-glow: 187 80% 38%;
+    --primary-glow: 199 89% 48%;
 
-    --secondary: 187 30% 94%;
-    --secondary-foreground: 187 92% 18%;
+    --secondary: 185 39% 94%;
+    --secondary-foreground: 215 25% 27%;
 
-    --muted: 210 20% 94%;
+    --muted: 187 24% 92%;
     --muted-foreground: 215 16% 42%;
 
-    --accent: 32 95% 50%;
+    --accent: 199 89% 48%;
     --accent-foreground: 0 0% 100%;
 
-    --success: 142 71% 36%;
+    --success: 160 84% 39%;
     --success-foreground: 0 0% 100%;
     --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --warning-foreground: 222 47% 11%;
 
-    --destructive: 0 84.2% 60.2%;
+    --destructive: 350 89% 60%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 188 25% 88%;
+    --input: 188 25% 88%;
+    --ring: 173 80% 40%;
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
 
-    --sidebar-background: 0 0% 98%;
+    --sidebar-background: 173 80% 32%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 100%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 100%;
+    --sidebar-ring: 166 76% 78%;
 
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --color-primary: #14b8a6;
+    --color-primary-hover: #0f766e;
+    --color-primary-soft: #ccfbf1;
+    --color-secondary: #3b82f6;
+    --color-accent: #06b6d4;
+    --color-accent-cyan: #06b6d4;
+    --color-accent-coral: #f97366;
+    --color-page: #eff6f7;
+    --color-surface-page: #eff6f7;
+    --color-surface: #ffffff;
+    --color-surface-card: #ffffff;
+    --color-surface-muted: #f4f9fa;
+    --color-surface-highlight: #f0fafa;
+    --color-surface-soft: #f0fafa;
+    --color-text: #0f172a;
+    --color-text-primary: #0f172a;
+    --color-text-secondary: #475569;
+    --color-text-muted: #64748b;
+    --color-border: #d9e7ea;
+    --color-border-default: #d9e7ea;
+    --color-border-strong: #c5d8dc;
+    --color-success: #10b981;
+    --color-warning: #f59e0b;
+    --color-danger: #f43f5e;
+    --color-info: #0ea5e9;
+    --table-header: 185 39% 94%;
+    --sidebar-gradient: linear-gradient(180deg, #0D9488 0%, #0891B2 55%, #2563EB 100%);
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
+    --background: 222 47% 11%;
     --foreground: 210 40% 98%;
 
-    --card: 222.2 84% 4.9%;
+    --card: 217 33% 17%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222.2 84% 4.9%;
+    --popover: 217 33% 17%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 173 80% 40%;
+    --primary-foreground: 0 0% 100%;
 
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
@@ -100,13 +114,13 @@ All colors MUST be HSL.
     --accent: 217.2 32.6% 17.5%;
     --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 350 76% 52%;
     --destructive-foreground: 210 40% 98%;
 
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
+    --sidebar-background: 173 80% 19%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;
     --sidebar-primary-foreground: 0 0% 100%;
@@ -114,6 +128,34 @@ All colors MUST be HSL.
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    --color-primary: #2dd4bf;
+    --color-primary-hover: #14b8a6;
+    --color-primary-soft: #134e4a;
+    --color-secondary: #60a5fa;
+    --color-accent: #22d3ee;
+    --color-accent-cyan: #22d3ee;
+    --color-accent-coral: #fb7185;
+    --color-page: #0f172a;
+    --color-surface-page: #0f172a;
+    --color-surface: #111827;
+    --color-surface-card: #1e293b;
+    --color-surface-muted: #1e293b;
+    --color-surface-highlight: #243449;
+    --color-surface-soft: #243449;
+    --color-text: #f8fafc;
+    --color-text-primary: #f8fafc;
+    --color-text-secondary: #cbd5e1;
+    --color-text-muted: #94a3b8;
+    --color-border: #334155;
+    --color-border-default: #334155;
+    --color-border-strong: #475569;
+    --color-success: #34d399;
+    --color-warning: #fbbf24;
+    --color-danger: #fb7185;
+    --color-info: #38bdf8;
+    --table-header: 217 33% 17%;
+    --sidebar-gradient: linear-gradient(180deg, #115e59 0%, #0f4c66 55%, #172554 100%);
   }
 }
 
@@ -124,19 +166,137 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
-    font-family: 'Sarabun', system-ui, -apple-system, sans-serif;
+    background-image: linear-gradient(135deg, var(--color-surface-highlight) 0%, var(--color-page) 55%, var(--color-surface-muted) 100%);
+    background-attachment: fixed;
+    min-width: 0;
+    font-family: 'Sarabun', 'Noto Sans Thai', system-ui, -apple-system, sans-serif;
+    font-feature-settings: "kern";
+    line-height: 1.5;
+    text-rendering: optimizeLegibility;
+  }
+
+  html { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: hsl(var(--foreground));
+    box-shadow: 0 0 0 1000px hsl(var(--background)) inset;
+    caret-color: hsl(var(--foreground));
+  }
+
+  button,
+  [role="button"],
+  input,
+  select,
+  textarea {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  }
+
+  select {
+    @apply bg-background;
+  }
+}
+
+@layer components {
+  .page-shell {
+    @apply mx-auto w-full max-w-[1500px] space-y-6 px-4 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8;
+  }
+
+  .surface-card {
+    @apply rounded-2xl border bg-card text-card-foreground shadow-card;
+    border-color: var(--color-border-default);
+    transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+  }
+
+  .surface-card-interactive {
+    @apply surface-card hover:-translate-y-0.5 hover:shadow-elegant;
+  }
+
+  .surface-card-interactive:hover,
+  .surface-card-interactive:focus-within {
+    border-color: #99f6e4;
+  }
+
+  .data-table {
+    @apply w-full text-sm;
+  }
+
+  .data-table thead {
+    @apply text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground;
+    background: hsl(var(--table-header));
+  }
+
+  .data-table th {
+    @apply whitespace-nowrap px-4 py-3;
+  }
+
+  .data-table td {
+    @apply px-4 py-3 align-middle;
+  }
+
+  .data-table tbody tr {
+    @apply border-t transition-colors;
+    border-color: var(--color-border-default);
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--color-surface-highlight);
+  }
+
+  .field-control {
+    @apply min-h-11 w-full rounded-xl border bg-background px-3 text-sm shadow-sm transition-colors;
+    border-color: var(--color-border-default);
+  }
+
+  .field-control:hover {
+    border-color: var(--color-border-strong);
+  }
+
+  .field-control:focus-visible {
+    border-color: var(--color-primary);
+  }
+
+  .kpi-card {
+    @apply relative overflow-hidden rounded-2xl border p-5 shadow-card;
+    border-color: var(--color-border-default);
+  }
+
+  .soft-panel {
+    @apply rounded-2xl border p-4;
+    border-color: var(--color-border-default);
+    background: var(--color-surface-highlight);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html, body, #root, header, main, [role="dialog"], input, select, textarea, button, table, .surface-card {
+    transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease, fill 200ms ease;
   }
 }
 
 @layer utilities {
-  .gradient-primary {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
-  }
   .shadow-elegant {
-    box-shadow: 0 10px 30px -12px hsl(var(--primary) / 0.25);
+    box-shadow: 0 12px 32px -16px hsl(var(--primary) / 0.34);
   }
   .shadow-card {
     box-shadow: 0 1px 3px hsl(222 47% 11% / 0.06), 0 1px 2px hsl(222 47% 11% / 0.04);
+  }
+
+  .safe-bottom {
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
 
@@ -196,5 +356,22 @@ All colors MUST be HSL.
   div {
     page-break-inside: avoid !important;
     break-inside: avoid !important;
+  }
+}
+
+/* Payroll documents are intentionally theme-independent for preview, PDF, and printing. */
+.payslip-document,
+.dark .payslip-document {
+  background: #ffffff;
+  color: #111827;
+  color-scheme: light;
+}
+
+@media print {
+  .payslip-document {
+    background: #ffffff !important;
+    color: #111827 !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
   }
 }

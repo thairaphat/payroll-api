@@ -42,9 +42,11 @@ function readSession(): AuthSession | null {
   }
 }
 
+const initialSession = readSession();
+
 export const useAuth = create<AuthState>((set) => ({
-  user: null,
-  token: null,
+  user: initialSession?.user ?? null,
+  token: initialSession?.token ?? null,
   init: () => {
     const session = readSession();
     if (session) {

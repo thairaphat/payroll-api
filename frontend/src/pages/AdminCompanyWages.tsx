@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Loader2, Pencil, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -16,6 +15,9 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { PageHeader } from "@/components/layout/PageHeader";
+import { StatePanel } from "@/components/layout/StatePanel";
+import { SemanticBadge } from "@/components/ui/semantic-badge";
 import {
   type CompanyWageInput,
   type CompanyWageRow,
@@ -138,21 +140,21 @@ export default function AdminCompanyWages() {
     setForm((current) => ({ ...current, [key]: value }));
 
   return (
-    <div className="space-y-6 p-4 sm:p-6">
-      <div className="flex items-center gap-3">
-        <div className="rounded-xl bg-blue-700 p-3 text-white"><Banknote className="h-6 w-6" /></div>
-        <div><h1 className="text-2xl font-bold">ค่าจ้างรายบริษัท</h1>
-          <p className="text-sm text-slate-500">กำหนดค่าจ้างและตัวคูณ OT แยกตามบริษัท</p></div>
-      </div>
+    <div className="page-shell">
+      <PageHeader
+        title="ค่าจ้างรายบริษัท"
+        description="กำหนดค่าจ้างและตัวคูณ OT แยกตามบริษัท"
+        icon={Banknote}
+      />
 
-      <Card className="p-4">
+      <Card className="soft-panel">
         <div className="grid gap-3 sm:grid-cols-[1fr_220px]">
           <div className="relative">
             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
             <Input aria-label="ค้นหาบริษัท" className="pl-9" placeholder="ค้นหาชื่อหรือรหัสบริษัท"
               value={search} onChange={(event) => setSearch(event.target.value)} />
           </div>
-          <select aria-label="กรองสถานะค่าจ้าง" className="h-10 rounded-md border bg-white px-3 text-sm"
+          <select aria-label="กรองสถานะค่าจ้าง" className="field-control"
             value={filter} onChange={(event) => setFilter(event.target.value as WageFilter)}>
             <option value="all">ทั้งหมด</option><option value="configured">ตั้งค่าแล้ว</option>
             <option value="missing">ยังไม่ตั้งค่า</option><option value="inactive">ปิดใช้งาน</option>
@@ -161,16 +163,17 @@ export default function AdminCompanyWages() {
       </Card>
 
       {query.isLoading ? (
-        <Card className="p-12 text-center text-slate-500"><Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin" />กำลังโหลดข้อมูล</Card>
+        <StatePanel kind="loading" title="กำลังโหลดข้อมูลค่าจ้าง" />
       ) : query.isError ? (
-        <Card className="p-8 text-center"><p className="text-red-600">{query.error.message}</p>
-          <Button className="mt-4" variant="outline" onClick={() => query.refetch()}>ลองใหม่</Button></Card>
+        <StatePanel kind="error" title="โหลดข้อมูลค่าจ้างไม่สำเร็จ"
+          message="กรุณาตรวจสอบการเชื่อมต่อแล้วลองใหม่"
+          action={<Button variant="outline" onClick={() => query.refetch()}>ลองใหม่</Button>} />
       ) : rows.length === 0 ? (
-        <Card className="p-12 text-center text-slate-500">ไม่พบข้อมูลบริษัท</Card>
+        <StatePanel kind="empty" title="ไม่พบข้อมูลบริษัท" message="ลองปรับคำค้นหาหรือตัวกรองสถานะ" />
       ) : (
-        <Card className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-sm">
-            <thead className="bg-slate-50 text-left"><tr>
+        <Card className="surface-card overflow-x-auto">
+          <table className="data-table min-w-[980px]">
+            <thead><tr>
               <th className="p-4">บริษัท</th><th className="p-4">ค่าจ้าง/วัน</th>
               <th className="p-4">ชั่วโมง/วัน</th><th className="p-4">OT 1 / 1.5 / 2 / 3</th>
               <th className="p-4">สถานะ</th><th className="p-4">แก้ไขล่าสุด</th>
@@ -186,9 +189,9 @@ export default function AdminCompanyWages() {
                   row.wageConfig.ot1Multiplier, row.wageConfig.ot15Multiplier,
                   row.wageConfig.ot2Multiplier, row.wageConfig.ot3Multiplier,
                 ].join(" / ") : "—"}</td>
-                <td className="p-4">{!row.wageConfig ? <Badge variant="secondary">ยังไม่ตั้งค่า</Badge>
-                  : row.wageConfig.isActive ? <Badge className="bg-emerald-600">ใช้งาน</Badge>
-                  : <Badge variant="destructive">ปิดใช้งาน</Badge>}</td>
+                <td className="p-4">{!row.wageConfig ? <SemanticBadge tone="neutral">ยังไม่ตั้งค่า</SemanticBadge>
+                  : row.wageConfig.isActive ? <SemanticBadge tone="success">ใช้งาน</SemanticBadge>
+                  : <SemanticBadge tone="danger">ปิดใช้งาน</SemanticBadge>}</td>
                 <td className="p-4">{row.wageConfig
                   ? new Date(row.wageConfig.updatedAt).toLocaleString("th-TH") : "—"}</td>
                 <td className="p-4 text-right"><Button size="sm" variant={row.wageConfig ? "outline" : "default"}

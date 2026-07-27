@@ -207,6 +207,7 @@ export default function Attendance() {
       }
 
       await queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     } catch (error) {
       console.error(error);
       toast.error(error instanceof Error ? error.message : "Sync ล้มเหลว");
@@ -231,10 +232,11 @@ export default function Attendance() {
     try {
       setSubmitting(true);
       const result = await submitAttendanceApproval(scope);
-      toast.success(`Submitted ${result.updated ?? 0} attendance record(s)`);
+      toast.success(`ส่งตรวจข้อมูลการเข้างานแล้ว ${result.updated ?? 0} รายการ`);
       await queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Submit attendance failed");
+      toast.error(error instanceof Error ? error.message : "ส่งตรวจข้อมูลการเข้างานไม่สำเร็จ");
     } finally {
       setSubmitting(false);
     }
@@ -247,26 +249,27 @@ export default function Attendance() {
     try {
       setApproving(true);
       const result = await approveAttendanceApproval(scope);
-      toast.success(`Approved ${result.updated ?? 0} attendance record(s)`);
+      toast.success(`อนุมัติรายการลงเวลา ${result.updated ?? 0} รายการแล้ว`);
       await queryClient.invalidateQueries({ queryKey: ["attendance"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Approve attendance failed");
+      toast.error(error instanceof Error ? error.message : "อนุมัติรายการลงเวลาไม่สำเร็จ");
     } finally {
       setApproving(false);
     }
   };
 
   const getApprovalLabel = (status: string, locked: boolean) => {
-    if (locked) return "Locked";
-    if (status === "submitted") return "Submitted";
-    if (status === "approved") return "Approved";
-    return "Draft";
+    if (locked) return "ล็อกเงินเดือนแล้ว";
+    if (status === "submitted") return "ส่งตรวจแล้ว";
+    if (status === "approved") return "อนุมัติแล้ว";
+    return "ฉบับร่าง";
   };
 
   const getApprovalClass = (status: string, locked: boolean) => {
-    if (locked) return "bg-slate-700 text-white";
-    if (status === "approved") return "bg-emerald-600 text-white";
-    if (status === "submitted") return "bg-amber-500 text-white";
+    if (locked) return "border border-indigo-200 bg-indigo-50 text-indigo-700";
+    if (status === "approved") return "border border-emerald-200 bg-emerald-50 text-emerald-700";
+    if (status === "submitted") return "border border-amber-200 bg-amber-50 text-amber-800";
     return "bg-slate-100 text-slate-700 border border-slate-200";
   };
 
@@ -301,7 +304,7 @@ export default function Attendance() {
   if (isError) {
     return (
       <div className="p-8">
-        <Card className="p-6 border-red-200 bg-red-50 text-red-700">
+        <Card className="border-red-200 bg-red-50 p-6 text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-100">
           ไม่สามารถโหลดข้อมูล Attendance ได้ กรุณาตรวจสอบการเชื่อมต่อกับ Backend
         </Card>
       </div>
@@ -309,20 +312,20 @@ export default function Attendance() {
   }
 
   return (
-  <div className="min-h-screen bg-[#f4f7fb]">
+  <div className="min-h-screen bg-background">
     <div className="p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8">
       <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
         <div className="flex items-start sm:items-center gap-3">
-          <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-2xl bg-gradient-to-br from-[#2563eb] to-[#1e3a8a] border border-blue-300/30 flex items-center justify-center shrink-0">
+          <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-2xl bg-primary border border-blue-300/30 flex items-center justify-center shrink-0">
             <CalendarDays className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
           </div>
 
           <div>
-            <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#0f172a]">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl lg:text-4xl">
               ประวัติการมาทำงาน
             </h1>
 
-            <p className="text-[#64748b] text-sm sm:text-base mt-1">
+            <p className="mt-1 text-sm text-muted-foreground sm:text-base">
               ข้อมูลการมาทำงานที่ Sync จาก Google Sheet
             </p>
           </div>
@@ -332,7 +335,8 @@ export default function Attendance() {
           onClick={handleSync}
           disabled={syncing}
           size="lg"
-          className="rounded-2xl bg-[#ef4444] hover:bg-[#dc2626] text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 w-full sm:w-auto"
+          variant="outline"
+          className="w-full border-teal-200 text-teal-800 hover:bg-teal-50 sm:w-auto"
         >
           <RefreshCw
             className={`h-4 w-4 mr-2 ${syncing ? "animate-spin" : ""}`}
@@ -343,59 +347,62 @@ export default function Attendance() {
 
       {isCydAdmin && (
         <Card className="p-4 rounded-2xl border-blue-200">
-          <label htmlFor="attendance-company" className="text-sm font-semibold text-slate-700">Company scope</label>
-          <select id="attendance-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="mt-2 h-11 w-full rounded-xl border px-3 bg-white">
-            <option value="">Select a company</option>
+          <label htmlFor="attendance-company" className="text-sm font-semibold text-foreground">บริษัทที่ต้องการดูข้อมูล</label>
+          <select id="attendance-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="mt-2 h-11 w-full rounded-xl border border-input bg-background px-3">
+            <option value="">เลือกบริษัท</option>
             {companies.map((company: { id: number; company_name: string }) => <option key={company.id} value={company.id}>{company.company_name}</option>)}
           </select>
         </Card>
       )}
 
       <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
-        <Card className="rounded-xl border border-gray-200 bg-green-100/50 p-5 lg:p-6 shadow-sm text-green-800">
+        <Card className="relative overflow-hidden rounded-2xl border border-emerald-100 bg-emerald-50 p-5 text-slate-900 shadow-sm dark:border-emerald-800/60 dark:bg-emerald-950/40 dark:text-emerald-100 lg:p-6">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-sm font-medium text-green-700/80">มาทำงาน</p>
+              <p className="text-sm font-medium text-slate-500">มาทำงาน</p>
               <h2 className="text-2xl font-semibold mt-2">
                 {presentCount}
               </h2>
             </div>
-            <div className="bg-white border border-gray-200 rounded-full p-2 shadow-sm">
+            <div className="rounded-xl bg-emerald-50 p-2.5">
               <CheckCircle2 className="h-6 w-6 text-green-600" />
             </div>
           </div>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-emerald-500" />
         </Card>
 
-        <Card className="rounded-xl border border-gray-200 bg-orange-100/50 p-5 lg:p-6 shadow-sm text-orange-800">
+        <Card className="relative overflow-hidden rounded-2xl border border-amber-100 bg-amber-50 p-5 text-slate-900 shadow-sm dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100 lg:p-6">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-sm font-medium text-orange-700/80">ลางาน</p>
+              <p className="text-sm font-medium text-slate-500">ลางาน</p>
               <h2 className="text-2xl font-semibold mt-2">
                 {leaveCount}
               </h2>
             </div>
-            <div className="bg-white border border-gray-200 rounded-full p-2 shadow-sm">
+            <div className="rounded-xl bg-amber-50 p-2.5">
               <AlertCircle className="h-6 w-6 text-orange-600" />
             </div>
           </div>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-amber-500" />
         </Card>
 
-        <Card className="rounded-xl border border-gray-200 bg-red-100/50 p-5 lg:p-6 shadow-sm text-red-800">
+        <Card className="relative overflow-hidden rounded-2xl border border-rose-100 bg-rose-50 p-5 text-slate-900 shadow-sm dark:border-rose-800/60 dark:bg-rose-950/40 dark:text-rose-100 lg:p-6">
           <div className="flex justify-between items-start">
             <div>
-              <p className="text-sm font-medium text-red-700/80">ขาดงาน</p>
+              <p className="text-sm font-medium text-slate-500">ขาดงาน</p>
               <h2 className="text-2xl font-semibold mt-2">
                 {absentCount}
               </h2>
             </div>
-            <div className="bg-white border border-gray-200 rounded-full p-2 shadow-sm">
+            <div className="rounded-xl bg-rose-50 p-2.5">
               <XCircle className="h-6 w-6 text-red-600" />
             </div>
           </div>
+          <div className="absolute inset-x-0 bottom-0 h-1 bg-rose-500" />
         </Card>
       </section>
 
-      <Card className="rounded-3xl border border-[#dbe4f0] bg-white p-4 sm:p-5 shadow-[0_8px_24px_rgba(30,58,138,0.08)]">
+      <Card className="soft-panel shadow-card">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div className="relative w-full lg:max-w-md">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748b]" />
@@ -404,7 +411,7 @@ export default function Attendance() {
               placeholder="ค้นหาชื่อพนักงาน รหัส หรือ วันที่..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-11 h-11 sm:h-12 rounded-2xl border-[#dbe4f0] bg-[#f8fbff] text-[#0f172a]"
+              className="field-control pl-11 sm:h-12"
             />
           </div>
 
@@ -415,7 +422,7 @@ export default function Attendance() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 mt-4 pt-4 border-t border-[#dbe4f0]">
+        <div className="mt-4 flex flex-wrap items-center gap-4 border-t border-[#CDE5E7] pt-4">
           <div className="flex flex-col gap-1.5 min-w-[180px]">
             <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">เลือกเดือน</label>
             <select
@@ -424,7 +431,7 @@ export default function Attendance() {
                 setSelectedMonth(e.target.value);
                 setSelectedDate("");
               }}
-              className="h-11 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-4 text-sm text-[#0f172a] outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="field-control px-4"
             >
               {allMonthOptions.map((m) => (
                 <option key={m} value={m}>
@@ -439,7 +446,7 @@ export default function Attendance() {
             <select
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="h-11 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-4 text-sm text-[#0f172a] outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="field-control px-4"
             >
               <option value="">ทุกวันที่</option>
               {dateOptions.map((date) => (
@@ -455,27 +462,27 @@ export default function Attendance() {
             <select
               value={approvalFilter}
               onChange={(e) => setApprovalFilter(e.target.value as ApprovalFilter)}
-              className="h-11 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-4 text-sm text-[#0f172a] outline-none focus:ring-2 focus:ring-blue-500/20"
+              className="field-control px-4"
             >
-              <option value="all">All approval status</option>
-              <option value="draft">Draft</option>
-              <option value="submitted">Submitted</option>
-              <option value="approved">Approved</option>
-              <option value="locked">Locked</option>
+              <option value="all">ทุกสถานะอนุมัติ</option>
+              <option value="draft">ฉบับร่าง</option>
+              <option value="submitted">ส่งตรวจแล้ว</option>
+              <option value="approved">อนุมัติแล้ว</option>
+              <option value="locked">ล็อกเงินเดือนแล้ว</option>
             </select>
           </div>
         </div>
       </Card>
 
-      <Card className="rounded-3xl border border-[#dbe4f0] bg-white shadow-[0_8px_24px_rgba(30,58,138,0.08)] overflow-hidden">
-        <div className="flex items-center justify-between p-5 sm:p-6 border-b border-[#dbe4f0]">
+      <Card className="surface-card overflow-hidden">
+        <div className="flex items-center justify-between border-b border-[#D9E7EA] p-5 sm:p-6">
           <div>
             {/* <h2 className="text-lg sm:text-xl font-bold text-foreground">
               ประวัติการมาทำงาน
             </h2> */}
 
             <p className="text-sm text-[#64748b] mt-1">
-              ข้อมูลล่าสุดจาก Database
+              ข้อมูลล่าสุดจากฐานข้อมูล
             </p>
           </div>
 
@@ -485,10 +492,10 @@ export default function Attendance() {
                 size="sm"
                 onClick={handleSubmitAttendance}
                 disabled={submitting || !selectedDate || !hasDraft}
-                className="rounded-xl bg-[#2563eb] hover:bg-[#1d4ed8] text-white"
+                className="rounded-xl"
               >
                 {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                Submit
+                ส่งตรวจ
               </Button>
             )}
 
@@ -500,7 +507,7 @@ export default function Attendance() {
                 className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white"
               >
                 {approving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                Approve
+                อนุมัติ
               </Button>
             )}
 
@@ -513,27 +520,27 @@ export default function Attendance() {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px]">
-            <thead className="bg-[#eef4ff]">
+            <thead className="bg-muted text-muted-foreground">
               <tr>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   วันที่
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   พนักงาน
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   สถานะ
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   Approval
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   เวลา
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-right text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-right text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   OT
                 </th>
-                <th className="py-4 px-4 sm:px-5 text-left text-xs uppercase tracking-wider text-[#64748b] font-semibold">
+                <th className="py-4 px-4 sm:px-5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                   หมายเหตุ
                 </th>
               </tr>
@@ -550,26 +557,26 @@ export default function Attendance() {
                 return (
                   <tr
                     key={a.id ?? `${employeeCode}-${a.workDate}-${index}`}
-                    className={`border-b border-[#dbe4f0] hover:bg-[#eef4ff] transition-colors ${isReadonly ? "opacity-80" : ""}`}
+                    className={`border-b border-border transition-colors hover:bg-muted/50 ${isReadonly ? "opacity-80" : ""}`}
                   >
                     <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
-                      <div className="font-mono text-[11px] sm:text-xs px-3 py-1 rounded-lg bg-[#eef4ff] text-[#1e3a8a] inline-block">
+                      <div className="inline-block rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-1 font-mono text-[11px] text-cyan-800 dark:border-cyan-800 dark:bg-cyan-950/50 dark:text-cyan-200 sm:text-xs">
                         {a.workDate ?? "-"}
                       </div>
                     </td>
 
                     <td className="py-4 px-4 sm:px-5">
                       <div className="flex items-center gap-3 min-w-[220px]">
-                        <div className="h-10 w-10 rounded-2xl bg-[#eef4ff] border border-blue-200 flex items-center justify-center shrink-0">
-                          <Users className="h-4 w-4 text-[#2563eb]" />
+                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-teal-200 bg-teal-50">
+                          <Users className="h-4 w-4 text-teal-700" />
                         </div>
 
                         <div className="min-w-0">
-                          <p className="font-semibold text-[#0f172a] truncate">
+                          <p className="truncate font-semibold text-foreground">
                             {employeeName}
                           </p>
 
-                          <p className="text-xs text-[#64748b] truncate">
+                          <p className="truncate text-xs text-muted-foreground">
                             {employeeCode}
                           </p>
                         </div>
@@ -578,7 +585,7 @@ export default function Attendance() {
 
                     <td className="py-4 px-4 sm:px-5 whitespace-nowrap">
                       {a.isPresent ? (
-                        <Badge className="bg-[#2563eb] text-white rounded-xl px-3 py-1">
+                        <Badge className="rounded-xl bg-emerald-600 px-3 py-1 text-white">
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           มาทำงาน
                         </Badge>
@@ -604,18 +611,18 @@ export default function Attendance() {
                       </Badge>
                     </td>
 
-                    <td className="py-4 px-4 sm:px-5 text-[#64748b] whitespace-nowrap">
+                    <td className="py-4 px-4 sm:px-5 whitespace-nowrap text-foreground">
                       {a.workTime}
                     </td>
 
                     <td className="py-4 px-4 sm:px-5 text-right whitespace-nowrap">
-                      <div className="inline-flex items-center gap-1 font-semibold text-[#2563eb]">
+                      <div className="inline-flex items-center gap-1 font-semibold text-teal-600 dark:text-teal-300">
                         <Clock3 className="h-4 w-4" />
                         {a.otHours ?? 0}
                       </div>
                     </td>
 
-                    <td className="py-4 px-4 sm:px-5 text-[#64748b] min-w-[220px]">
+                    <td className="min-w-[220px] py-4 px-4 sm:px-5 text-muted-foreground">
                       <div className="truncate">{a.note ?? "-"}</div>
                     </td>
                   </tr>
@@ -626,7 +633,7 @@ export default function Attendance() {
                 <tr>
                   <td
                     colSpan={7}
-                    className="py-10 text-center text-[#64748b]"
+                    className="py-10 text-center text-muted-foreground"
                   >
                     ไม่พบข้อมูล
                   </td>

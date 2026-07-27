@@ -36,7 +36,7 @@ describe("Employees", () => {
   it("renders an empty employee list without the removed master-sync control", async () => {
     renderEmployees();
 
-    expect(await screen.findByText("ไม่พบข้อมูลพนักงาน")).toBeInTheDocument();
+    expect((await screen.findAllByText("ไม่พบข้อมูลพนักงาน")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Sync Employee Master")).not.toBeInTheDocument();
   });
 
@@ -56,7 +56,7 @@ describe("Employees", () => {
 
   it("hides the company selector from a company administrator", async () => {
     const { container } = renderEmployees();
-    await screen.findByText("ไม่พบข้อมูลพนักงาน");
+    await screen.findAllByText("ไม่พบข้อมูลพนักงาน");
     expect(container.querySelector("#company-scope")).not.toBeInTheDocument();
   });
 });

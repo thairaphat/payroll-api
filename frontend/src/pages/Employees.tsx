@@ -2,6 +2,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { KpiCard } from "@/components/layout/KpiCard";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Plus, Search, Users, Loader2, Save } from "lucide-react";
@@ -16,6 +18,10 @@ import {
 import { toast } from "sonner";
 import { useAuth } from "@/store/auth";
 import { hasRole } from "@/lib/authz";
+import {
+  normalizeEmployeeDebtAmount,
+  sumEmployeeDebt,
+} from "@/lib/employee-amount";
 import {
   Dialog,
   DialogContent,
@@ -93,7 +99,7 @@ export default function Employees() {
     );
   });
 
-  const totalDebt = employees.reduce((acc, emp) => acc + Number(emp.debt_amount || 0), 0);
+  const totalDebt = sumEmployeeDebt(employees);
   const statusCount = new Set(employees.map((e) => e.employment_status).filter(Boolean)).size;
 
   const handleAddSubmit = async () => {
@@ -143,39 +149,26 @@ export default function Employees() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#f4f7fb] to-[#e6edff]">
+    <div className="min-h-screen bg-background">
       <div className="p-4 sm:p-6 lg:p-8 space-y-6 lg:space-y-8">
-        <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
-          <div className="flex items-start sm:items-center gap-3">
-            <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-2xl bg-gradient-to-br from-[#3b82f6] to-[#1e40af] border border-blue-300/30 flex items-center justify-center shrink-0 shadow-lg">
-              <Users className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-            </div>
-
-            <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#0f172a]">
-                Employees
-              </h1>
-
-              <p className="text-[#64748b] text-sm sm:text-base mt-1">
-                จัดการข้อมูลแรงงานต่างด้าวทั้งหมดในระบบ
-              </p>
-            </div>
-          </div>
-
-          {!isCydAdmin && <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+        <PageHeader
+          title="พนักงาน"
+          description="ค้นหา ตรวจสอบ และจัดการข้อมูลพนักงานในบริษัท"
+          icon={Users}
+          actions={!isCydAdmin ? <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
             <Button
               onClick={() => setAddOpen(true)}
               size="lg"
-              className="rounded-2xl bg-[#2563eb] hover:bg-[#1e40af] text-white shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-0.5 w-full sm:w-auto"
+              className="w-full sm:w-auto"
             >
               <Plus className="h-4 w-4 mr-2" />
               เพิ่มพนักงาน
             </Button>
-          </div>}
-        </header>
+          </div> : undefined}
+        />
 
         {isCydAdmin && (
-          <Card className="p-4 rounded-2xl border-blue-200">
+          <Card className="soft-panel">
             <Label htmlFor="company-scope">บริษัทที่ต้องการตรวจสอบ</Label>
             <select id="company-scope" value={selectedCompanyId} onChange={(event) => setSelectedCompanyId(event.target.value)} className="mt-2 w-full h-11 px-3 rounded-xl border">
               <option value="">เลือกบริษัท</option>
@@ -184,30 +177,13 @@ export default function Employees() {
           </Card>
         )}
 
-        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-5">
-          <Card className="rounded-3xl bg-gradient-to-r from-[#2563eb] to-[#1e40af] text-white p-5 lg:p-6 shadow-xl">
-            <p className="text-sm opacity-80">พนักงานทั้งหมด</p>
-            <h2 className="text-2xl sm:text-3xl font-bold mt-2">
-              {isLoading ? "..." : employees.length}
-            </h2>
-          </Card>
-
-          <Card className="rounded-3xl border border-[#dbe4f0] bg-white p-5 lg:p-6 shadow-[0_10px_30px_rgba(37,99,235,0.08)]">
-            <p className="text-sm text-[#64748b]">ยอดหนี้สะสมรวม</p>
-            <h2 className="text-2xl sm:text-3xl font-bold mt-2 text-red-600">
-              {formatTHB(totalDebt)}
-            </h2>
-          </Card>
-
-          <Card className="rounded-3xl border border-[#dbe4f0] bg-white p-5 lg:p-6 shadow-[0_10px_30px_rgba(37,99,235,0.08)]">
-            <p className="text-sm text-[#64748b]">สถานะการจ้าง</p>
-            <h2 className="text-2xl sm:text-3xl font-bold mt-2 text-[#2563eb]">
-              {statusCount} สถานะ
-            </h2>
-          </Card>
+        <section className="grid grid-cols-1 gap-4 min-[360px]:grid-cols-2 xl:grid-cols-3">
+          <KpiCard label="พนักงานทั้งหมด" value={isLoading ? "..." : employees.length} icon={Users} tone="blue" />
+          <KpiCard label="ยอดหนี้สะสมรวม" value={formatTHB(totalDebt)} icon={Users} tone="rose" />
+          <KpiCard label="สถานะการจ้าง" value={`${statusCount} สถานะ`} icon={Users} tone="teal" />
         </section>
 
-        <Card className="rounded-3xl border border-[#dbe4f0] bg-white/95 backdrop-blur-md p-4 sm:p-5 shadow-[0_10px_30px_rgba(37,99,235,0.08)]">
+        <Card className="soft-panel shadow-card">
           <div className="flex flex-col lg:flex-row gap-4 lg:items-center lg:justify-between">
             <div className="relative w-full lg:max-w-md">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[#64748b]" />
@@ -216,15 +192,15 @@ export default function Employees() {
                 placeholder="ค้นหาชื่อ รหัส หรือบริษัท..."
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                className="pl-11 h-11 sm:h-12 rounded-2xl border-[#dbe4f0] bg-[#f8fbff] text-[#0f172a]"
+                className="field-control pl-11 sm:h-12"
               />
             </div>
 
             <select
-              aria-label="Employment status"
+              aria-label="สถานะการจ้าง"
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value)}
-              className="h-11 rounded-2xl border border-[#dbe4f0] bg-[#f8fbff] px-3 text-sm"
+              className="field-control px-3"
             >
               <option value="all">ทุกสถานะ</option>
               {[...new Set(employees.map((employee) => employee.employment_status).filter((status): status is string => Boolean(status)))].map((status) => (
@@ -242,8 +218,8 @@ export default function Employees() {
           </div>
         </Card>
 
-        <Card className="rounded-3xl border border-[#dbe4f0] bg-white shadow-[0_10px_30px_rgba(37,99,235,0.08)] overflow-hidden">
-          <div className="p-5 sm:p-6 border-b border-[#dbe4f0]">
+        <Card className="surface-card overflow-hidden">
+          <div className="border-b border-[#D9E7EA] p-5 sm:p-6">
             <h2 className="text-lg sm:text-xl font-bold text-[#0f172a]">
               รายชื่อพนักงาน
             </h2>
@@ -253,9 +229,64 @@ export default function Employees() {
             </p>
           </div>
 
-          <div className="overflow-x-auto">
+          <div className="grid gap-3 p-4 md:hidden" aria-label="รายชื่อพนักงาน">
+            {isLoading ? (
+              <div className="flex min-h-32 items-center justify-center gap-2 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                กำลังโหลดข้อมูลพนักงาน...
+              </div>
+            ) : filtered.length > 0 ? (
+              filtered.map((employee) => (
+                <article
+                  key={employee.id}
+                  className="rounded-2xl border border-border bg-card p-4 text-card-foreground shadow-card"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700">
+                      <Users className="h-5 w-5" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="break-words font-bold text-card-foreground">
+                        {[employee.first_name_th || employee.first_name, employee.last_name_th || employee.last_name]
+                          .filter(Boolean)
+                          .join(" ") || "-"}
+                      </h3>
+                      <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                        {employee.emp_code || "-"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-800">
+                      {employee.employment_status || "Worker"}
+                    </span>
+                  </div>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-border pt-4 text-sm">
+                    <div>
+                      <dt className="text-xs text-muted-foreground">บริษัท</dt>
+                      <dd className="mt-1 break-words font-semibold text-card-foreground">
+                        {employee.company_name || "-"}
+                      </dd>
+                    </div>
+                    <div className="text-right">
+                      <dt className="text-xs text-slate-500">ยอดหนี้สะสม</dt>
+                      <dd className="mt-1 font-bold text-red-700">
+                        {formatTHB(normalizeEmployeeDebtAmount(employee.debt_amount))}
+                      </dd>
+                    </div>
+                  </dl>
+                </article>
+              ))
+            ) : (
+              <p className="py-8 text-center text-sm text-slate-500">
+                {isCydAdmin && selectedCompanyId
+                  ? "ไม่พบข้อมูลพนักงานในบริษัทนี้"
+                  : "ไม่พบข้อมูลพนักงาน"}
+              </p>
+            )}
+          </div>
+
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[1000px]">
-              <thead className="bg-[#eef4ff]">
+              <thead className="bg-muted/60 text-muted-foreground dark:bg-slate-900/60">
                 <tr>
                   <th className="py-4 px-4 sm:px-5 text-left text-xs text-[#64748b] font-semibold">
                     Code
@@ -292,26 +323,26 @@ export default function Employees() {
                   filtered.map((e) => (
                     <tr
                       key={e.id}
-                      className="border-b border-[#dbe4f0] hover:bg-[#eef4ff] transition-colors"
+                      className="border-b border-border text-card-foreground transition-colors hover:bg-muted/40"
                     >
                       <td className="py-4 px-4 sm:px-5">
-                        <div className="font-mono text-xs px-3 py-1 rounded-lg bg-[#eef4ff] text-[#1e3a8a] border border-blue-100 inline-block font-bold">
+                        <div className="inline-block rounded-lg border border-teal-100 bg-teal-50 px-3 py-1 font-mono text-xs font-bold text-teal-800 dark:border-teal-800 dark:bg-teal-950/50 dark:text-teal-200">
                           {e.emp_code || "-"}
                         </div>
                       </td>
 
                       <td className="py-4 px-4 sm:px-5">
                         <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded-2xl bg-white border border-slate-200 flex items-center justify-center shadow-sm shrink-0">
-                            <Users className="h-4 w-4 text-[#2563eb]" />
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-border bg-card shadow-sm">
+                            <Users className="h-4 w-4 text-teal-700 dark:text-teal-300" />
                           </div>
 
                           <div>
-                            <p className="font-semibold text-[#0f172a]">
+                            <p className="font-semibold text-foreground">
                               {e.first_name_th || e.first_name || "-"}
                             </p>
 
-                            <p className="text-[10px] text-[#64748b] uppercase tracking-wider">
+                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
                               {e.employment_status || "Worker"}
                             </p>
                           </div>
@@ -319,27 +350,27 @@ export default function Employees() {
                       </td>
 
                       <td className="py-4 px-4 sm:px-5">
-                        <span className="font-semibold text-[#0f172a]">
+                        <span className="font-semibold text-foreground">
                           {e.last_name_th || e.last_name || "-"}
                         </span>
                       </td>
 
                       <td className="py-4 px-4 sm:px-5">
-                        <span className="text-sm font-medium text-slate-600">
+                        <span className="text-sm font-medium text-muted-foreground">
                           {e.passport_number || "-"}
                         </span>
                       </td>
 
                       <td className="py-4 px-4 sm:px-5">
                         <div className="flex flex-col">
-                          <span className="text-sm font-semibold text-[#1e3a8a]">
+                          <span className="text-sm font-semibold text-teal-800 dark:text-teal-300">
                             {e.company_name || "-"}
                           </span>
                         </div>
                       </td>
 
-                      <td className="py-4 px-4 sm:px-5 text-right font-black text-red-600">
-                        {formatTHB(Number(e.debt_amount || 0))}
+                      <td className="py-4 px-4 text-right font-black text-rose-600 dark:text-rose-300 sm:px-5">
+                        {formatTHB(normalizeEmployeeDebtAmount(e.debt_amount))}
                       </td>
                     </tr>
                   ))
@@ -419,7 +450,7 @@ export default function Employees() {
             <Button
               disabled={adding}
               onClick={handleAddSubmit}
-              className="w-full h-12 rounded-xl bg-blue-600 hover:bg-blue-700 font-bold text-white shadow-lg shadow-blue-100 transition-all active:scale-95"
+              className="h-12 w-full rounded-xl font-bold text-white shadow-lg transition-all active:scale-95"
             >
               {adding ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <Save className="h-5 w-5 mr-2" />}
               บันทึกข้อมูลพนักงาน

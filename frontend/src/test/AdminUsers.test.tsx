@@ -33,15 +33,15 @@ describe("AdminUsers", () => {
 
   it("renders an empty state for a company without users", async () => {
     renderPage();
-    fireEvent.change(await screen.findByLabelText("Company"), { target: { value: "25" } });
-    expect(await screen.findByText("No users found for this company.")).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("บริษัท"), { target: { value: "25" } });
+    expect(await screen.findByText("ไม่พบผู้ใช้งาน")).toBeInTheDocument();
     expect(fetchManagedUsers).toHaveBeenCalledWith(25);
   });
 
   it("shows an API error without crashing", async () => {
     vi.mocked(fetchManagedUsers).mockRejectedValue(new Error("network error"));
     renderPage();
-    fireEvent.change(await screen.findByLabelText("Company"), { target: { value: "25" } });
-    expect(await screen.findByText("Unable to load users. Please try again.")).toBeInTheDocument();
+    fireEvent.change(await screen.findByLabelText("บริษัท"), { target: { value: "25" } });
+    expect(await screen.findByText("โหลดผู้ใช้งานไม่สำเร็จ")).toBeInTheDocument();
   });
 });

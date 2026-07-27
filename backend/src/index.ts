@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { jwt } from "@elysiajs/jwt";
 import { payrollRoute } from "./modules/payroll/payroll.route";
+import { payrollRunRoute } from "./modules/payroll-runs/payroll-run.route";
 import { attendanceRoute } from "./modules/attendance/attendance.route";
 import { fieldAttendanceRoute } from "./modules/attendance/field-attendance.route";
 import { employeeRoute } from "./modules/employees/employee.route";
@@ -66,6 +67,7 @@ const app = new Elysia()
   .use(attendanceRoute)
   .use(fieldAttendanceRoute)
   .use(employeeRoute)
+  .use(payrollRunRoute)
   .use(payrollRoute)
   .use(dashboardRoute)
   .use(userManagementRoute)
@@ -85,11 +87,11 @@ const app = new Elysia()
   });
 
 app.listen({
-  port: 3001,
+  port: Number(process.env.PORT ?? 3001),
   idleTimeout: 180,
 });
 
-console.log("Server running on http://localhost:3001");
+console.log(`Server running on http://localhost:${app.server?.port ?? 3001}`);
 
 async function runStartupDiagnostics() {
   const rawUrl = process.env.DATABASE_URL ?? "(not set)";

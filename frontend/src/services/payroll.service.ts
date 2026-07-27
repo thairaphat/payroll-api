@@ -17,7 +17,7 @@
  *   - ย้าย logic นี้ไปที่ฝั่ง server เพื่อกัน manipulation จาก client
  */
 
-import { Attendance, Employee, Payroll } from "@/types/domain";
+import { Attendance, Employee, Payroll, type Role } from "@/types/domain";
 import { authFetch } from "@/lib/authz";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
@@ -38,6 +38,39 @@ export type PayrollSummaryParams = {
   includeDraft?: boolean;
   companyId?: number;
 };
+
+export type PayrollScope = "ready" | "all";
+
+export function canViewAllPayrollRecords(role: Role | null) {
+  return role === "cyd_admin" || role === "admin" || role === "hr";
+}
+
+export function parsePayrollCompanyId(value: string) {
+  if (!/^\d+$/.test(value)) return undefined;
+  const companyId = Number(value);
+  return Number.isSafeInteger(companyId) && companyId > 0
+    ? companyId
+    : undefined;
+}
+
+export function payrollQueryKey(input: {
+  startDate: string;
+  endDate: string;
+  scope: PayrollScope;
+  companyId: string;
+  language: string;
+  paymentDate: string;
+}) {
+  return [
+    "payroll",
+    input.startDate,
+    input.endDate,
+    input.scope,
+    input.companyId,
+    input.language,
+    input.paymentDate,
+  ] as const;
+}
 
 export class PayrollApiError extends Error {
   constructor(

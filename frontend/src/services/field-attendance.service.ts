@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/authz";
+import type { FieldAttendanceRecord } from "@/lib/field-attendance";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -35,7 +36,10 @@ export async function addManualEmployee(data: {
   return res.json();
 }
 
-export async function saveFieldAttendance(date: string, records: any[]) {
+export async function saveFieldAttendance(
+  date: string,
+  records: FieldAttendanceRecord[]
+) {
   const sanitizedRecords = records.map(({ shift_name, ...record }) => record);
   const res = await authFetch(`${API_URL}/api/field-attendance/bulk`, {
     method: "POST",

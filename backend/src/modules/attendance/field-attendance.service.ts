@@ -3,6 +3,10 @@ import { prisma } from "../../db";
 import { APPROVAL_STATUS, FIELD_APP_SHEET_ID } from "../../constants/attendance";
 import type { AuthUser } from "../../middlewares/auth.middleware";
 import { logRequiredAudit } from "../../services/audit.service";
+import {
+  normalizeEmployeeCode,
+  resolveProfileDisplayName,
+} from "../../utils/employee-profile";
 
 export const FIELD_ATTENDANCE_BATCH_LIMIT = 200;
 
@@ -57,9 +61,9 @@ type TransactionRunner = {
 
 type ValidatedRecord = FieldAttendanceRecordInput & {
   employeeCode: string;
-  ot1Value: number;
-  ot15Value: number;
-  ot2Value: number;
+  ot1Value?: number;
+  ot15Value?: number;
+  ot2Value?: number;
 };
 
 function validDate(value: string) {
@@ -82,8 +86,9 @@ function optionalWorkTime(value: unknown) {
   );
 }
 
-function nonNegativeNumber(value: unknown, field: string) {
-  const parsed = Number(value ?? 0);
+function optionalNonNegativeNumber(value: unknown, field: string) {
+  if (value == null || value === "") return undefined;
+  const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 24) {
     throw new FieldAttendanceBulkError(
       "INVALID_INPUT",
@@ -132,7 +137,7 @@ export function validateFieldAttendanceBatch(
     const record = raw as FieldAttendanceRecordInput;
     const employeeCode =
       typeof record.employee_code === "string"
-        ? record.employee_code.trim()
+        ? normalizeEmployeeCode(record.employee_code)
         : "";
     if (!employeeCode || employeeCode.length > 64) {
       throw new FieldAttendanceBulkError(
@@ -162,9 +167,9 @@ export function validateFieldAttendanceBatch(
     return {
       ...record,
       employeeCode,
-      ot1Value: nonNegativeNumber(record.ot1, "ot1"),
-      ot15Value: nonNegativeNumber(record.ot15, "ot15"),
-      ot2Value: nonNegativeNumber(record.ot2, "ot2"),
+      ot1Value: optionalNonNegativeNumber(record.ot1, "ot1"),
+      ot15Value: optionalNonNegativeNumber(record.ot15, "ot15"),
+      ot2Value: optionalNonNegativeNumber(record.ot2, "ot2"),
     };
   });
 
@@ -181,17 +186,14 @@ function text(value: unknown) {
 function buildData(
   record: ValidatedRecord,
   workDate: Date,
-  user: AuthUser
+  user: AuthUser,
+  employeeName: string,
+  ot: { ot1: number; ot15: number; ot2: number }
 ) {
   const firstName = text(record.first_name);
   const lastName = text(record.last_name);
-  const employeeName =
-    [firstName, lastName].filter(Boolean).join(" ") ||
-    text(record.employee_name) ||
-    "UNKNOWN";
-
   return {
-    employee_code: record.employeeCode,
+    employee_code: normalizeEmployeeCode(record.employeeCode),
     employee_code_13: text(record.employee_code_13),
     employee_name: employeeName,
     first_name: firstName,
@@ -202,10 +204,10 @@ function buildData(
     branch_code: text(record.branch_code),
     work_time: text(record.work_time),
     is_present: !Boolean(record.leave_day),
-    ot1: record.ot1Value,
-    ot15: record.ot15Value,
-    ot2: record.ot2Value,
-    ot_hours: record.ot1Value + record.ot15Value + record.ot2Value,
+    ot1: ot.ot1,
+    ot15: ot.ot15,
+    ot2: ot.ot2,
+    ot_hours: ot.ot1 + ot.ot15 + ot.ot2,
     note: text(record.note),
     search_text: text(record.search_text),
     source_sheet_id: FIELD_APP_SHEET_ID,
@@ -225,19 +227,36 @@ export async function saveFieldAttendanceBatch(
   transactionRunner: TransactionRunner = prisma
 ) {
   const validated = validateFieldAttendanceBatch(input.date, input.records);
-  const codes = validated.records.map((record) => record.employeeCode);
+  const codes = validated.records.map((record) =>
+    normalizeEmployeeCode(record.employeeCode)
+  );
 
   return transactionRunner.$transaction(async (tx) => {
     const profiles = await tx.employee_document_profiles.findMany({
       where: { emp_code: { in: codes }, company_id: { not: null } },
-      select: { emp_code: true, company_id: true },
+      select: {
+        emp_code: true,
+        company_id: true,
+        first_name_th: true,
+        last_name_th: true,
+        first_name_en: true,
+        last_name_en: true,
+        first_name: true,
+        last_name: true,
+      },
     });
     const ownership = new Map<string, Set<number>>();
+    const officialNames = new Map<string, string>();
     for (const profile of profiles) {
       if (!profile.emp_code || profile.company_id == null) continue;
-      const owners = ownership.get(profile.emp_code) ?? new Set<number>();
+      const normalizedCode = normalizeEmployeeCode(profile.emp_code);
+      const owners = ownership.get(normalizedCode) ?? new Set<number>();
       owners.add(profile.company_id);
-      ownership.set(profile.emp_code, owners);
+      ownership.set(normalizedCode, owners);
+      if (profile.company_id === companyId) {
+        const officialName = resolveProfileDisplayName(profile);
+        if (officialName) officialNames.set(normalizedCode, officialName);
+      }
     }
     const crossCompany = codes.some(
       (code) => {
@@ -262,6 +281,13 @@ export async function saveFieldAttendanceBatch(
         403
       );
     }
+    if (codes.some((code) => !officialNames.has(code))) {
+      throw new FieldAttendanceBulkError(
+        "UNKNOWN_EMPLOYEE",
+        "Employee profile is incomplete for the current company",
+        403
+      );
+    }
 
     const existingRows = await tx.attendance_records.findMany({
       where: {
@@ -274,10 +300,13 @@ export async function saveFieldAttendanceBatch(
         approval_status: true,
         payroll_locked_at: true,
         created_by: true,
+        ot1: true,
+        ot15: true,
+        ot2: true,
       },
     });
     const existing = new Map(
-      existingRows.map((row) => [row.employee_code, row])
+      existingRows.map((row) => [normalizeEmployeeCode(row.employee_code), row])
     );
     for (const code of codes) {
       const row = existing.get(code);
@@ -305,13 +334,26 @@ export async function saveFieldAttendanceBatch(
     }
 
     for (const record of validated.records) {
-      const data = buildData(record, validated.workDate, user);
+      const normalizedCode = normalizeEmployeeCode(record.employeeCode);
+      const existingRow = existing.get(normalizedCode);
+      const ot = {
+        ot1: record.ot1Value ?? Number(existingRow?.ot1 ?? 0),
+        ot15: record.ot15Value ?? Number(existingRow?.ot15 ?? 0),
+        ot2: record.ot2Value ?? Number(existingRow?.ot2 ?? 0),
+      };
+      const data = buildData(
+        { ...record, employeeCode: normalizedCode },
+        validated.workDate,
+        user,
+        officialNames.get(normalizedCode)!,
+        ot
+      );
       const { approval_status, created_by, ...updateData } = data;
       await tx.attendance_records.upsert({
         where: {
           uniq_attendance: {
             source_sheet_id: FIELD_APP_SHEET_ID,
-            employee_code: record.employeeCode,
+            employee_code: normalizedCode,
             work_date: validated.workDate,
           },
         },

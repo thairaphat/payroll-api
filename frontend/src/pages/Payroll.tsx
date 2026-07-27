@@ -2,16 +2,17 @@
  * Payroll Page — Responsive + Modern UI
  */
 import { useRef, useState, useMemo, useEffect } from "react";
-import { jsPDF } from "jspdf";
 import { createRoot, type Root } from "react-dom/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { PageHeader } from "@/components/layout/PageHeader";
 
 import {
   addPayrollSlipElementToPdf,
+  createPayrollPdfDocument,
   downloadBlob,
   generatePayrollSlipPdfFromElement,
   PayrollLanguage,
@@ -35,6 +36,9 @@ import {
   formatTHB,
   fetchPayrollSummary,
   lockPayrollPeriod,
+  canViewAllPayrollRecords,
+  parsePayrollCompanyId,
+  payrollQueryKey,
   payrollQueryRetry,
 } from "@/services/payroll.service";
 import { PayrollErrorNotice } from "@/components/payroll/PayrollErrorNotice";
@@ -45,10 +49,13 @@ import { useAuth } from "@/store/auth";
 import { normalizeRole } from "@/lib/authz";
 import { getCompanies } from "@/services/employee.service";
 import { useSearchParams } from "react-router-dom";
+import { EmployeeProfileName } from "@/components/employee/EmployeeProfileName";
+import { isEmployeeProfileMissing } from "@/lib/employee-profile";
 
 type PayrollRow = {
   employee_code: string;
-  employee_name: string;
+  employee_name: string | null;
+  employee_profile_status?: "FOUND" | "NOT_FOUND";
   branch_code: string;
   work_days: number | string;
   total_ot1: number | string;
@@ -221,7 +228,7 @@ function SlipTemplate({
 
   return (
     <div 
-      className="bg-white p-6 pb-8 w-full max-w-[950px] border-[1px] border-black mx-auto text-black overflow-hidden"
+      className="payslip-document mx-auto w-full max-w-[950px] overflow-hidden border border-black bg-white p-6 pb-8 text-black"
       style={{ 
         fontFamily: "'Noto Sans Myanmar', 'Sarabun', Arial, sans-serif",
         color: '#000000',
@@ -260,7 +267,13 @@ function SlipTemplate({
         </div>
         <div className="px-3 py-2 border-r border-gray-400 flex flex-col gap-1">
           <span className="font-bold leading-snug whitespace-normal break-words">{getLabel("EMPLOYEE_NAME", lang)}:</span>
-          <span className="font-semibold whitespace-normal break-words">{slip.employee_name}</span>
+          <div className="font-semibold whitespace-normal break-words">
+            <EmployeeProfileName
+              employeeCode={slip.employee_code}
+              employee_name={slip.employee_name}
+              employee_profile_status={slip.employee_profile_status}
+            />
+          </div>
         </div>
         <div className="px-3 py-2 border-r border-gray-400 flex flex-col gap-1">
           <span className="font-bold leading-snug whitespace-normal break-words">{getLabel("BRANCH", lang)}:</span>
@@ -394,6 +407,7 @@ export default function Payroll() {
   const isCydAdmin = userRole === "cyd_admin";
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedCompanyId = searchParams.get("companyId") ?? "";
+  const selectedCompanyNumber = parsePayrollCompanyId(selectedCompanyId);
   const now = new Date();
   const [selectedMonth, setSelectedMonth] = useState(THIS_MONTH);
   const [payrollScope, setPayrollScope] = useState<"ready" | "all">("ready");
@@ -509,27 +523,74 @@ export default function Payroll() {
     }
   }, [availableDates]);
 
+  useEffect(() => {
+    setSelectedSlip(null);
+    setIsPreviewOpen(false);
+  }, [selectedCompanyId, selectedMonth, payrollScope]);
+
   const allMonthOptions = useMemo(() => {
     const months = new Set([THIS_MONTH, LAST_MONTH, ...availableMonths]);
     return Array.from(months).sort((a, b) => b.localeCompare(a));
   }, [availableMonths]);
 
-  const canSeeAllRecords = userRole === "admin" || userRole === "hr";
+  const canSeeAllRecords = canViewAllPayrollRecords(userRole);
+  const payrollQueryEnabled =
+    !isCydAdmin || selectedCompanyNumber !== undefined;
 
   const {
     data: rows = [],
     isLoading: loading,
+    isFetching: fetching,
     isError,
     error: payrollError,
+    refetch: refetchPayroll,
   } = useQuery({
-    queryKey: ["payroll", selectedRange.startDate, selectedRange.endDate, payrollScope, selectedCompanyId],
+    queryKey: payrollQueryKey({
+      startDate: selectedRange.startDate,
+      endDate: selectedRange.endDate,
+      scope: payrollScope,
+      companyId: selectedCompanyId,
+      language,
+      paymentDate: payDate,
+    }),
     queryFn: () => fetchPayrollSummary({
       startDate: selectedRange.startDate,
       endDate: selectedRange.endDate,
       includeDraft: payrollScope === "all",
-      companyId: isCydAdmin ? Number(selectedCompanyId) : undefined,
+      companyId: isCydAdmin ? selectedCompanyNumber : undefined,
     }),
-    enabled: !isCydAdmin || Boolean(selectedCompanyId),
+    enabled: payrollQueryEnabled,
+    retry: payrollQueryRetry,
+  });
+
+  const shouldCheckDraftRows =
+    canSeeAllRecords &&
+    payrollQueryEnabled &&
+    payrollScope === "ready" &&
+    !loading &&
+    !isError &&
+    rows.length === 0;
+  const {
+    data: allScopeRows = [],
+    isLoading: loadingAllScopeRows,
+    isError: allScopeError,
+    refetch: refetchAllScopeRows,
+  } = useQuery({
+    queryKey: payrollQueryKey({
+      startDate: selectedRange.startDate,
+      endDate: selectedRange.endDate,
+      scope: "all",
+      companyId: selectedCompanyId,
+      language,
+      paymentDate: payDate,
+    }),
+    queryFn: () => fetchPayrollSummary({
+      startDate: selectedRange.startDate,
+      endDate: selectedRange.endDate,
+      includeDraft: true,
+      companyId: isCydAdmin ? selectedCompanyNumber : undefined,
+    }),
+    enabled: shouldCheckDraftRows,
     retry: payrollQueryRetry,
   });
 
@@ -546,13 +607,28 @@ export default function Payroll() {
     : rows;
 
   const totalNet = filteredRows.reduce((s, r) => s + getNetIncome(r), 0);
+  const missingProfileRows = filteredRows.filter(isEmployeeProfileMissing);
+  const hasMissingProfiles = missingProfileRows.length > 0;
+
+  const warnMissingProfile = () =>
+    toast.warning(
+      "พบรายการลงเวลาที่ไม่เชื่อมโยงกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ"
+    );
 
   const handlePrint = () => {
+    if (selectedSlip && isEmployeeProfileMissing(selectedSlip)) {
+      warnMissingProfile();
+      return;
+    }
     window.print();
   };
 
   const handleDownload = async () => {
     if (!selectedSlip) return;
+    if (isEmployeeProfileMissing(selectedSlip)) {
+      warnMissingProfile();
+      return;
+    }
     setDownloadingId(selectedSlip.employee_code);
 
     try {
@@ -571,6 +647,10 @@ export default function Payroll() {
   };
 
   const handleDownloadRow = async (row: PayrollRow) => {
+    if (isEmployeeProfileMissing(row)) {
+      warnMissingProfile();
+      return;
+    }
     setDownloadingId(row.employee_code);
     let renderedSlip: Awaited<ReturnType<typeof renderSlipElementForPdf>> | null = null;
     try {
@@ -595,9 +675,13 @@ export default function Payroll() {
       toast.error("ไม่พบข้อมูลเงินเดือนสำหรับวันที่เลือก");
       return;
     }
+    if (hasMissingProfiles) {
+      warnMissingProfile();
+      return;
+    }
     setBulkDownloading(true);
     try {
-      const pdf = new jsPDF("l", "mm", "a4");
+      const pdf = createPayrollPdfDocument();
       for (let i = 0; i < filteredRows.length; i++) {
         let renderedSlip: Awaited<ReturnType<typeof renderSlipElementForPdf>> | null = null;
         try {
@@ -616,46 +700,38 @@ export default function Payroll() {
     }
   };
 
-  if (isError) {
-    return <PayrollErrorNotice error={payrollError} role={userRole} />;
-  }
-
   return (
-    <div className="min-h-screen bg-[#eef2f7] px-4 py-5 sm:px-6 lg:px-8">
-      <div className="space-y-6 lg:space-y-8">
-        <header className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5 font-['Sarabun',_'Noto_Sans_Myanmar',_sans-serif]">
-          <div className="flex items-center gap-3">
-             <div className="h-12 w-12 rounded-2xl bg-blue-100 flex items-center justify-center shrink-0">
-                <Wallet className="h-6 w-6 text-blue-700" />
-             </div>
-             <div>
-                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">เงินเดือน</h1>
-                <p className="text-slate-500 text-sm">เดือน {payrollMonth}/{payrollYear}</p>
-             </div>
-          </div>
+    <div className="min-h-screen bg-background">
+      <div className="page-shell">
+        <PageHeader
+          title="เงินเดือน"
+          description={`ตรวจสอบรายได้ รายการหัก และเงินสุทธิ ประจำเดือน ${payrollMonth}/${payrollYear}`}
+          icon={Wallet}
+        />
 
-          <div className="flex flex-wrap items-center gap-3">
+        <Card className="soft-panel">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[1fr_1.15fr_auto_1fr_auto] xl:items-end">
             <div className="flex flex-col gap-1 min-w-[150px]">
-               <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">Scope</label>
+               <label className="text-sm font-semibold text-foreground">ขอบเขตข้อมูล</label>
                <select
                  value={payrollScope}
                  onChange={(e) => setPayrollScope(e.target.value as "ready" | "all")}
-                 className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                 className="field-control"
                >
-                 <option value="ready">Payroll Ready</option>
-                 {canSeeAllRecords && <option value="all">All Records (Draft+)</option>}
+                 <option value="ready">พร้อมคำนวณเงินเดือน</option>
+                 {canSeeAllRecords && <option value="all">ทุกรายการ รวมฉบับร่าง</option>}
                </select>
             </div>
 
             <div className="flex flex-col gap-1 min-w-[180px]">
-               <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">เลือกเดือน</label>
+               <label className="text-sm font-semibold text-foreground">เลือกเดือน</label>
                <select
                  value={selectedMonth}
                  onChange={(e) => {
                    setSelectedMonth(e.target.value);
                    setSelectedCompany("");
                  }}
-                 className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                 className="field-control"
                >
                  {allMonthOptions.map((m) => (
                    <option key={m} value={m}>
@@ -666,15 +742,15 @@ export default function Payroll() {
             </div>
 
             <div className="flex flex-col gap-1">
-               <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">ภาษา</label>
-               <div className="flex items-center gap-1 bg-white rounded-xl border p-1 shadow-sm h-10">
+               <label className="text-sm font-semibold text-foreground">ภาษาสลิป</label>
+               <div className="flex min-h-11 items-center gap-1 rounded-xl border border-border bg-card p-1 shadow-sm">
                   <Languages className="h-4 w-4 mx-2 text-slate-400" />
                   {["th", "mm", "dual"].map((l) => (
                     <button 
                      key={l}
                      onClick={() => setLanguage(l as PayrollLanguage)}
-                     className={cn("px-3 py-1.5 text-xs font-bold rounded-lg uppercase", language === l ? "bg-blue-600 text-white shadow-md" : "text-slate-500 hover:bg-slate-100")}
-                    >{l}</button>
+                     className={cn("min-h-9 rounded-lg px-3 py-1.5 text-xs font-bold uppercase", language === l ? "bg-[linear-gradient(135deg,#0D9488,#2563EB)] text-white shadow-sm" : "text-slate-500 hover:bg-teal-50")}
+                    >{l === "th" ? "ไทย" : l === "mm" ? "เมียนมา" : "สองภาษา"}</button>
                   ))}
                </div>
             </div>
@@ -684,7 +760,7 @@ export default function Payroll() {
                <select
                  value={selectedCompany}
                  onChange={(e) => setSelectedCompany(e.target.value)}
-                 className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                 className="h-10 rounded-xl border border-input bg-background px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-primary/20"
                >
                  <option value="">เลือกบริษัท</option>
                  {companies.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -692,11 +768,11 @@ export default function Payroll() {
             </div> */}
 
             <div className="flex flex-col gap-1 min-w-[150px]">
-               <label className="text-[10px] uppercase font-bold text-slate-500 ml-1">วันที่จ่าย</label>
+               <label className="text-sm font-semibold text-foreground">วันที่จ่าย</label>
                <select
                  value={payDate}
                  onChange={(e) => setPayDate(e.target.value)}
-                 className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm shadow-sm outline-none focus:ring-2 focus:ring-blue-500/20"
+                 className="field-control"
                >
                  <option value="">เลือกวันที่</option>
                  {availableDates.map((d) => (
@@ -705,33 +781,86 @@ export default function Payroll() {
                </select>
             </div>
 
-            <div className="flex items-end h-[50px]">
-              <Button onClick={handleDownloadAll} disabled={!payDate || bulkDownloading || rows.length === 0} className="rounded-xl bg-[#1e40af] hover:bg-[#1e3a8a] text-white h-10">
+            <div className="flex items-end">
+              <Button onClick={handleDownloadAll} disabled={!payDate || bulkDownloading || rows.length === 0 || hasMissingProfiles} className="w-full xl:w-auto">
                 {bulkDownloading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Download className="h-4 w-4 mr-2" />}
                 PDF ทั้งหมด
               </Button>
             </div>
           </div>
-        </header>
+        </Card>
 
         {isCydAdmin && (
-          <Card className="p-4 rounded-2xl border-blue-200">
-            <label htmlFor="payroll-company" className="text-sm font-semibold text-slate-700">Company scope</label>
-            <select id="payroll-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="mt-2 h-11 w-full rounded-xl border px-3 bg-white">
-              <option value="">Select a company</option>
+          <Card className="soft-panel">
+            <label htmlFor="payroll-company" className="text-sm font-semibold text-foreground">บริษัทที่ต้องการดูข้อมูล</label>
+            <select id="payroll-company" value={selectedCompanyId} onChange={(event) => setSearchParams(event.target.value ? { companyId: event.target.value } : {})} className="field-control mt-2">
+              <option value="">เลือกบริษัท</option>
               {scopedCompanies.map((company: { id: number; company_name: string }) => <option key={company.id} value={company.id}>{company.company_name}</option>)}
             </select>
           </Card>
         )}
 
-        <Card className="rounded-3xl border border-slate-200 bg-white shadow-xl overflow-hidden">
-          <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
-             <h2 className="font-bold text-slate-900">รายการพนักงาน ({filteredRows.length})</h2>
-             <Badge className="bg-blue-50 text-blue-700 border-blue-200">Payroll Ready</Badge>
+        {hasMissingProfiles && (
+          <div
+            role="alert"
+            className="rounded-2xl border border-amber-300 bg-amber-50 p-4 font-semibold text-amber-900"
+          >
+            พบรายการลงเวลาที่ไม่เชื่อมโยงกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ
+          </div>
+        )}
+
+        {isError && (
+          <div className="space-y-3">
+            <PayrollErrorNotice error={payrollError} role={userRole} />
+            <div className="flex justify-center">
+              <Button type="button" variant="outline" onClick={() => refetchPayroll()}>
+                ลองใหม่
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {!isError && (
+        <Card className="surface-card overflow-hidden">
+          <div className="flex items-center justify-between p-5 sm:p-6">
+             <h2 className="font-bold text-foreground">รายการพนักงาน ({filteredRows.length})</h2>
+             <Badge className="border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-800 dark:bg-blue-950/50 dark:text-blue-200">
+               {payrollScope === "ready" ? "พร้อมคำนวณเงินเดือน" : "ทุกรายการ"}
+             </Badge>
           </div>
           <div className="overflow-x-auto font-['Sarabun',_'Noto_Sans_Myanmar',_sans-serif]">
+            {isCydAdmin && !selectedCompanyId ? (
+              <div className="p-8 text-center text-muted-foreground">กรุณาเลือกบริษัท</div>
+            ) : isCydAdmin && selectedCompanyNumber === undefined ? (
+              <div role="alert" className="p-8 text-center text-red-700">
+                รหัสบริษัทไม่ถูกต้อง
+              </div>
+            ) : loading || fetching || loadingAllScopeRows ? (
+              <div className="flex items-center justify-center gap-2 p-8 text-slate-600">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                กำลังโหลดข้อมูลเงินเดือน
+              </div>
+            ) : filteredRows.length === 0 &&
+              payrollScope === "ready" &&
+              allScopeRows.length > 0 ? (
+              <div className="p-8 text-center text-amber-800">
+                ยังไม่มีรายการที่พร้อมทำเงินเดือน พบรายการฉบับร่างจำนวน{" "}
+                {allScopeRows.length} รายการ กรุณาอนุมัติหรือเปลี่ยน Scope เป็น All Records
+              </div>
+            ) : allScopeError ? (
+              <div role="alert" className="space-y-3 p-8 text-center text-red-700">
+                <p>ไม่สามารถตรวจสอบรายการฉบับร่างได้ กรุณาลองใหม่</p>
+                <Button type="button" variant="outline" onClick={() => refetchAllScopeRows()}>
+                  ลองใหม่
+                </Button>
+              </div>
+            ) : filteredRows.length === 0 && !allScopeError ? (
+              <div className="p-8 text-center text-slate-600">
+                ไม่พบข้อมูลบันทึกหน้างานของบริษัทนี้ในเดือนที่เลือก
+              </div>
+            ) : (
             <table className="w-full">
-              <thead className="bg-slate-100 text-slate-500 text-[10px] uppercase font-bold tracking-wider">
+              <thead className="bg-muted text-muted-foreground text-[10px] uppercase font-bold tracking-wider">
                 <tr>
                   <th className="py-4 px-6 text-left">Code</th>
                   <th className="py-4 px-6 text-left">พนักงาน</th>
@@ -741,19 +870,25 @@ export default function Payroll() {
                   <th className="py-4 px-6 text-right">สลิป</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-border">
                 {filteredRows.map((row) => (
-                  <tr key={row.employee_code} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-4 px-6 font-mono text-xs font-bold text-slate-700">{row.employee_code}</td>
-                    <td className="py-4 px-6 font-semibold text-slate-900">{row.employee_name}</td>
-                    <td className="py-4 px-6 text-right text-slate-700">{num(row.work_days)}</td>
-                    <td className="py-4 px-6 text-right text-blue-600 font-medium">{num(row.total_ot_hours)}</td>
-                    <td className="py-4 px-6 text-right font-black text-blue-700">{formatTHB(getNetIncome(row))}</td>
+                  <tr key={row.employee_code} className="transition-colors hover:bg-muted/50">
+                    <td className="py-4 px-6 font-mono text-xs font-bold text-muted-foreground">{row.employee_code}</td>
+                    <td className="py-4 px-6">
+                      <EmployeeProfileName
+                        employeeCode={row.employee_code}
+                        employee_name={row.employee_name}
+                        employee_profile_status={row.employee_profile_status}
+                      />
+                    </td>
+                    <td className="py-4 px-6 text-right text-foreground">{num(row.work_days)}</td>
+                    <td className="py-4 px-6 text-right font-medium text-indigo-600 dark:text-indigo-300">{num(row.total_ot_hours)}</td>
+                    <td className="py-4 px-6 text-right font-black text-indigo-600 dark:text-sky-300">{formatTHB(getNetIncome(row))}</td>
                     <td className="py-4 px-6 text-right flex justify-end gap-2">
-                       <Button size="sm" variant="outline" onClick={() => { setSelectedSlip(row); setIsPreviewOpen(true); }} className="rounded-xl border-blue-100 text-blue-600 hover:bg-blue-50">
+                       <Button size="sm" variant="outline" onClick={() => { setSelectedSlip(row); setIsPreviewOpen(true); }} className="rounded-xl border-border text-primary hover:bg-primary/10">
                          <Eye className="h-4 w-4" />
                        </Button>
-                       <Button size="sm" variant="outline" onClick={() => handleDownloadRow(row)} className="rounded-xl border-blue-100 text-blue-600 hover:bg-blue-50">
+                       <Button size="sm" variant="outline" disabled={isEmployeeProfileMissing(row)} onClick={() => handleDownloadRow(row)} className="rounded-xl border-border text-primary hover:bg-primary/10">
                          <Download className="h-4 w-4" />
                        </Button>
                     </td>
@@ -761,24 +896,31 @@ export default function Payroll() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         </Card>
+        )}
       </div>
 
       {selectedSlip && (
         <div className={cn("fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto", !isPreviewOpen && "hidden")}>
-          <div className="relative w-full max-w-[1000px] bg-white rounded-2xl shadow-2xl p-4 sm:p-8">
+          <div className="relative w-full max-w-[1000px] rounded-2xl bg-card p-4 text-card-foreground shadow-2xl sm:p-8">
             <div className="absolute right-8 top-8 flex gap-3 z-10 no-print">
                <Button variant="secondary" onClick={() => { setIsPreviewOpen(false); setSelectedSlip(null); }} className="rounded-xl shadow-md border border-slate-200">ปิด</Button>
-               <Button onClick={handlePrint} variant="outline" className="rounded-xl border-blue-600 text-blue-600 hover:bg-blue-50 shadow-md">
+               <Button disabled={isEmployeeProfileMissing(selectedSlip)} onClick={handlePrint} variant="outline" className="rounded-xl border-blue-600 text-blue-600 hover:bg-blue-50 shadow-md">
                   <Printer className="h-4 w-4 mr-2" /> พิมพ์ / Save as PDF
                </Button>
-               <Button onClick={handleDownload} className="rounded-xl bg-blue-700 hover:bg-blue-800 text-white shadow-lg">
+               <Button disabled={isEmployeeProfileMissing(selectedSlip)} onClick={handleDownload} className="rounded-xl text-white shadow-lg">
                   <Download className="h-4 w-4 mr-2" /> ดาวน์โหลด PDF (Legacy)
                </Button>
             </div>
-            <div className="mt-16 overflow-x-hidden flex justify-center text-black">
-              <div ref={slipRef} className="bg-white print-only w-full flex justify-center">
+            {isEmployeeProfileMissing(selectedSlip) && (
+              <div role="alert" className="mt-16 rounded-xl border border-amber-300 bg-amber-50 p-3 text-amber-900">
+                พบรายการลงเวลาที่ไม่เชื่อมโยงกับข้อมูลพนักงาน กรุณาติดต่อผู้ดูแลระบบ
+              </div>
+            )}
+            <div className="mt-4 overflow-x-hidden flex justify-center text-black">
+              <div ref={slipRef} className="payslip-document print-only flex w-full justify-center">
                 <SlipTemplate slip={selectedSlip} payDate={payDate} month={payrollMonth} year={payrollYear} periodStart={selectedRange.startDate} periodEnd={selectedRange.endDate} lang={language} />
               </div>
             </div>

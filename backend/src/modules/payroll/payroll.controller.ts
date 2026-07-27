@@ -2,6 +2,7 @@ import type { Context } from "elysia";
 import {
   getPayrollSummary,
   getPayrollByEmployeeCode,
+  PayrollDataIntegrityError,
   type PayrollDateRange,
 } from "./payroll.service";
 import { getAuthUser } from "../../middlewares/auth.middleware";
@@ -42,6 +43,10 @@ function getRangeFromQuery(query: any): PayrollDateRange {
   return currentMonthRange();
 }
 
+export function canIncludeDraftPayroll(role: string | undefined) {
+  return role === "cyd_admin" || role === "admin" || role === "hr";
+}
+
 export const payrollSummaryController = async (context: Context) => {
   const user = await getAuthUser(context.request, (context as any).jwt);
   logRouteEnter("/payroll", user);
@@ -59,7 +64,7 @@ export const payrollSummaryController = async (context: Context) => {
   }
 
   const includeDraftParam = context.query?.includeDraft === "true";
-  const canSeeDraft = user?.role === "admin" || user?.role === "hr";
+  const canSeeDraft = canIncludeDraftPayroll(user?.role);
   const includeDraft = includeDraftParam && canSeeDraft;
 
   const range = getRangeFromQuery(context.query);
@@ -74,6 +79,15 @@ export const payrollSummaryController = async (context: Context) => {
     if (err instanceof WageConfigError) {
       (context as any).set.status = err.status;
       return companyWageErrorPayload(err, scope);
+    }
+    if (err instanceof PayrollDataIntegrityError) {
+      (context as any).set.status = err.status;
+      return {
+        success: false,
+        code: err.code,
+        message: err.message,
+        employeeCodes: err.employeeCodes,
+      };
     }
     throw err;
   }
@@ -108,7 +122,7 @@ export const payrollByEmployeeController = async (context: Context) => {
   }
 
   const includeDraftParam = context.query?.includeDraft === "true";
-  const canSeeDraft = user?.role === "admin" || user?.role === "hr";
+  const canSeeDraft = canIncludeDraftPayroll(user?.role);
   const includeDraft = includeDraftParam && canSeeDraft;
 
   const range = getRangeFromQuery(context.query);
@@ -119,6 +133,15 @@ export const payrollByEmployeeController = async (context: Context) => {
     if (error instanceof WageConfigError) {
       (context as any).set.status = error.status;
       return companyWageErrorPayload(error, scope);
+    }
+    if (error instanceof PayrollDataIntegrityError) {
+      (context as any).set.status = error.status;
+      return {
+        success: false,
+        code: error.code,
+        message: error.message,
+        employeeCodes: error.employeeCodes,
+      };
     }
     throw error;
   }

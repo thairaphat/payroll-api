@@ -35,6 +35,7 @@ function row() {
   return {
     employee_code: "E001",
     employee_name: "Employee",
+    employee_profile_status: "FOUND" as const,
     work_days: 20,
     total_ot1: 2,
     total_ot15: 2,
@@ -275,6 +276,27 @@ describe("payroll lock transaction", () => {
     await expect(
       executePayrollLock({ date: "2026-07-01" }, user, setup.dependencies)
     ).rejects.toMatchObject({ code: "PAYROLL_ALREADY_LOCKED", status: 409 });
+    expect(setup.calls).toEqual(["wage", "codes"]);
+  });
+
+  it("EMP-NAME-008 blocks payroll lock before every mutation when a profile is missing", async () => {
+    const setup = harness({
+      calculate: async () => [
+        {
+          ...row(),
+          employee_code: "CYD1096",
+          employee_name: null,
+          employee_profile_status: "NOT_FOUND",
+        },
+      ],
+    });
+    await expect(
+      executePayrollLock({ date: "2026-07-01" }, user, setup.dependencies)
+    ).rejects.toMatchObject({
+      code: "PAYROLL_EMPLOYEE_PROFILE_MISSING",
+      employeeCodes: ["CYD1096"],
+      status: 422,
+    });
     expect(setup.calls).toEqual(["wage", "codes"]);
   });
 });

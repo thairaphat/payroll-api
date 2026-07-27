@@ -1,13 +1,19 @@
-import { Prisma } from "@prisma/client";
+import { Prisma, type payroll_run_items } from "@prisma/client";
 import { prisma } from "../../db";
 import {
   APPROVAL_STATUS,
+  FIELD_APP_SHEET_ID,
   TEST_CODE_PREFIX_FIELD,
   TEST_CODE_PREFIX_MVP,
   TEST_EMPLOYEE_NAME,
 } from "../../constants/attendance";
 import { getActiveWageConfig, type WageConfig } from "../../services/wage-config.service";
 import { companySqlFragment, getCompanyEmployeeCodes } from "../../services/company-scope.service";
+import {
+  isUsableEmployeeName,
+  normalizeEmployeeCode,
+} from "../../utils/employee-profile";
+import { withPayrollRunSchemaFallback } from "../payroll-runs/payroll-run-schema";
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -26,6 +32,16 @@ export type PayrollDateRange = {
   startDate: string;
   endDate: string;
 };
+
+export class PayrollDataIntegrityError extends Error {
+  readonly code = "PAYROLL_EMPLOYEE_PROFILE_DUPLICATE";
+  readonly status = 409;
+
+  constructor(public readonly employeeCodes: string[]) {
+    super("Duplicate employee profiles exist in this company scope.");
+    this.name = "PayrollDataIntegrityError";
+  }
+}
 
 type PayrollLiveClient = Pick<
   Prisma.TransactionClient,
@@ -51,6 +67,28 @@ function validateDateRange(range: PayrollDateRange) {
 
 function toDate(value: string) {
   return new Date(`${value}T00:00:00.000Z`);
+}
+
+export async function assertUniqueCompanyPayrollProfiles(
+  companyId: number,
+  db: Pick<Prisma.TransactionClient, "$queryRaw"> = prisma
+) {
+  const duplicates = await db.$queryRaw<Array<{ employee_code: string }>>(
+    Prisma.sql`
+      SELECT UPPER(TRIM(emp_code)) AS employee_code
+      FROM employee_document_profiles
+      WHERE company_id = ${companyId}
+        AND emp_code IS NOT NULL
+        AND TRIM(emp_code) <> ''
+      GROUP BY UPPER(TRIM(emp_code))
+      HAVING COUNT(*) > 1
+    `
+  );
+  if (duplicates.length > 0) {
+    throw new PayrollDataIntegrityError(
+      duplicates.map((row) => normalizeEmployeeCode(row.employee_code))
+    );
+  }
 }
 
 function num(value: unknown) {
@@ -117,15 +155,25 @@ export function applyWageToRow<T extends Record<string, unknown>>(row: T, wage: 
 }
 
 function withDeductionBreakdown<T extends Record<string, unknown>>(row: T) {
-  // Normalize employee_name — handles snake_case (raw SQL) and camelCase (Prisma ORM).
-  const rawName = String((row as any).employee_name ?? (row as any).employeeName ?? "").trim();
-  const rawCode = String((row as any).employee_code ?? (row as any).employeeCode ?? "").trim();
-  const resolvedName = rawName || rawCode;
+  const rawName = row.employee_name ?? row.employeeName;
+  const rawCode = row.employee_code ?? row.employeeCode;
+  const explicitStatus =
+    row.employee_profile_status ?? row.employeeProfileStatus;
+  const profileFound =
+    explicitStatus !== "NOT_FOUND" && isUsableEmployeeName(rawName);
+  const resolvedName = profileFound ? String(rawName).trim() : null;
 
   const enriched = {
     ...row,
+    employee_code: normalizeEmployeeCode(rawCode),
     employee_name: resolvedName,
     employeeName: resolvedName,
+    employee_profile_status: profileFound
+      ? ("FOUND" as const)
+      : ("NOT_FOUND" as const),
+    employeeProfileStatus: profileFound
+      ? ("FOUND" as const)
+      : ("NOT_FOUND" as const),
     insuranceDeduction: num(row.insuranceDeduction),
     employerChangeDeduction: num(row.employerChangeDeduction),
     report90DaysDeduction: num(row.report90DaysDeduction),
@@ -158,7 +206,7 @@ function withDeductionBreakdown<T extends Record<string, unknown>>(row: T) {
  * The SQL now returns `company_id` (from employee_document_profiles) so the
  * application layer can look up the correct wage for each employee row.
  */
-function buildPayrollSql(
+export function buildPayrollSql(
   range: PayrollDateRange,
   includeDraft: boolean,
   employeeCode?: string,
@@ -173,15 +221,21 @@ function buildPayrollSql(
       )`;
 
   const employeeFragment = employeeCode
-    ? Prisma.sql`AND a.employee_code = ${employeeCode}`
+    ? Prisma.sql`AND UPPER(TRIM(a.employee_code)) = ${normalizeEmployeeCode(employeeCode)}`
     : Prisma.empty;
 
   const limitFragment = employeeCode ? Prisma.sql`LIMIT 1` : Prisma.empty;
 
   const companyFragment = companySqlFragment(companyId ?? null);
+  const profileCompanyJoinFragment =
+    companyId != null
+      ? Prisma.sql`AND e.company_id = ${companyId}`
+      : Prisma.empty;
   const companyCodeFragment = companyCodes
     ? companyCodes.length > 0
-      ? Prisma.sql`AND a.employee_code IN (${Prisma.join(companyCodes)})`
+      ? Prisma.sql`AND UPPER(TRIM(a.employee_code)) IN (${Prisma.join(
+          companyCodes.map(normalizeEmployeeCode)
+        )})`
       : Prisma.sql`AND 1 = 0`
     : Prisma.empty;
 
@@ -192,23 +246,34 @@ function buildPayrollSql(
       -- per group and works on the 1:1 joined rows here. Both m.emp_code
       -- (UNIQUE JOIN) and a.employee_code are wrapped — any column not directly
       -- listed as a GROUP BY key must be inside an aggregate.
-       MAX(a.employee_code) AS employee_code,
+       UPPER(TRIM(MAX(a.employee_code))) AS employee_code,
+       MAX(e.id)                         AS employee_profile_id,
 
-      -- Name fallback chain (DB level):
-      --   1. a.employee_name if not blank  (a.employee_name is a GROUP BY key — raw OK)
-      --   2. Thai name from employee_document_profiles
-      --   3. English name from employee_document_profiles
-      --   4. Default profile name (first_name + last_name)
-      --   5. emp_code / employee_code as last resort
+      -- Profile names are authoritative. Attendance name is only a compatibility
+      -- fallback, and literal UNKNOWN is treated as missing.
       COALESCE(
-        NULLIF(TRIM(a.employee_name), ''),
         NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_th), ''), ' ', COALESCE(MAX(e.last_name_th), ''))), ''),
         NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_en), ''), ' ', COALESCE(MAX(e.last_name_en), ''))), ''),
         NULLIF(TRIM(CONCAT(MAX(e.first_name), ' ', MAX(e.last_name))), ''),
-         MAX(a.employee_code)
+        NULLIF(
+          CASE
+            WHEN UPPER(TRIM(MAX(a.employee_name))) = 'UNKNOWN' THEN ''
+            ELSE TRIM(MAX(a.employee_name))
+          END,
+          ''
+        )
       )                                      AS employee_name,
 
-      a.branch_code                          AS branch_code,
+      CASE
+        WHEN COALESCE(
+          NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_th), ''), ' ', COALESCE(MAX(e.last_name_th), ''))), ''),
+          NULLIF(TRIM(CONCAT(COALESCE(MAX(e.first_name_en), ''), ' ', COALESCE(MAX(e.last_name_en), ''))), ''),
+          NULLIF(TRIM(CONCAT(MAX(e.first_name), ' ', MAX(e.last_name))), '')
+        ) IS NULL THEN 'NOT_FOUND'
+        ELSE 'FOUND'
+      END                                    AS employee_profile_status,
+
+      MAX(a.branch_code)                     AS branch_code,
 
       -- company_id is resolved via the profile join; used in JS to pick the
       -- correct wage config for this employee.
@@ -223,8 +288,32 @@ function buildPayrollSql(
       -- deduction_amount from profile; income fields are computed in JS
       COALESCE(MAX(e.debt_amount), 0)        AS deduction_amount
 
-    FROM attendance_records a
-    INNER JOIN employee_document_profiles e ON a.employee_code = e.emp_code
+    FROM (
+      SELECT ranked.*
+      FROM (
+        SELECT
+          source_rows.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY UPPER(TRIM(source_rows.employee_code)), source_rows.work_date
+            ORDER BY
+              CASE
+                WHEN source_rows.payroll_locked_at IS NOT NULL THEN 0
+                WHEN LOWER(TRIM(source_rows.approval_status)) = ${APPROVAL_STATUS.APPROVED} THEN 1
+                WHEN LOWER(TRIM(source_rows.approval_status)) = ${APPROVAL_STATUS.SUBMITTED} THEN 2
+                WHEN LOWER(TRIM(source_rows.approval_status)) = ${APPROVAL_STATUS.DRAFT} THEN 3
+                ELSE 4
+              END,
+              CASE WHEN source_rows.source_sheet_id = ${FIELD_APP_SHEET_ID} THEN 0 ELSE 1 END,
+              source_rows.updated_at DESC,
+              source_rows.id DESC
+          ) AS canonical_rank
+        FROM attendance_records source_rows
+      ) ranked
+      WHERE ranked.canonical_rank = 1
+    ) a
+    INNER JOIN employee_document_profiles e
+      ON UPPER(TRIM(a.employee_code)) = UPPER(TRIM(e.emp_code))
+      ${profileCompanyJoinFragment}
     WHERE a.is_present = 1
       ${approvalFragment}
       AND a.work_date BETWEEN ${toDate(range.startDate)} AND ${toDate(range.endDate)}
@@ -234,7 +323,7 @@ function buildPayrollSql(
       ${employeeFragment}
       ${companyFragment}
       ${companyCodeFragment}
-    GROUP BY a.employee_code, a.employee_name, a.branch_code
+    GROUP BY e.company_id, e.id, UPPER(TRIM(a.employee_code))
     ORDER BY employee_code ASC
     ${limitFragment}
   `;
@@ -257,12 +346,15 @@ export function deriveSnapshotOt1Income(snap: any) {
 function formatSnapshotAsPayrollRow(snap: any) {
   const empCode = snap.employee_code ?? snap.employeeCode ?? "";
   const rawName = snap.employee_name ?? snap.employeeName ?? "";
-  const empName = String(rawName).trim() || String(empCode);
+  const empName = isUsableEmployeeName(rawName)
+    ? String(rawName).trim()
+    : null;
 
   return withDeductionBreakdown({
     employee_code: empCode,
     employee_name: empName,
     employeeName: empName,
+    employee_profile_status: empName ? "FOUND" : "NOT_FOUND",
     branch_code: snap.branch_code ?? snap.branchCode ?? null,
     work_days: Number(snap.work_days ?? snap.workDays ?? 0),
     total_ot1: Number(snap.total_ot1 ?? snap.totalOt1 ?? 0),
@@ -284,6 +376,81 @@ function formatSnapshotAsPayrollRow(snap: any) {
     net_income: Number(snap.net_income ?? snap.netIncome ?? 0),
     _from_snapshot: true,
   });
+}
+
+function formatRunItemAsPayrollRow(item: payroll_run_items) {
+  const wage = item.wage_config_snapshot as Record<string, unknown>;
+  const hourlyRate = new Prisma.Decimal(String(wage.dailyWage ?? 0)).div(
+    String(wage.workHoursPerDay ?? 1)
+  );
+  const ot1Income = new Prisma.Decimal(item.ot1_hours)
+    .mul(hourlyRate)
+    .mul(String(wage.ot1Multiplier ?? 1));
+  const ot15Income = new Prisma.Decimal(item.ot15_hours)
+    .mul(hourlyRate)
+    .mul(String(wage.ot15Multiplier ?? 1.5));
+  const ot2Income = new Prisma.Decimal(item.ot2_hours)
+    .mul(hourlyRate)
+    .mul(String(wage.ot2Multiplier ?? 2));
+  return withDeductionBreakdown({
+    employee_code: item.employee_code_snapshot,
+    employee_name: item.employee_name_snapshot,
+    employeeName: item.employee_name_snapshot,
+    employee_profile_id: item.employee_profile_id,
+    employee_profile_status: "FOUND",
+    branch_code: item.branch_code_snapshot,
+    work_days: item.work_days,
+    total_ot1: item.ot1_hours,
+    total_ot15: item.ot15_hours,
+    total_ot2: item.ot2_hours,
+    total_ot_hours: new Prisma.Decimal(item.ot1_hours)
+      .plus(item.ot15_hours)
+      .plus(item.ot2_hours)
+      .toNumber(),
+    base_income: item.base_income,
+    ot1_income: ot1Income,
+    ot15_income: ot15Income,
+    ot2_income: ot2Income,
+    gross_income: item.gross_income,
+    deduction_amount: item.total_deductions,
+    documentFeeDeduction: item.total_deductions,
+    net_income: item.net_income,
+    _from_snapshot: true,
+    _payroll_run_id: item.payroll_run_id.toString(),
+  });
+}
+
+async function getLockedRunItems(
+  companyId: number,
+  range: PayrollDateRange,
+  employeeCode?: string
+) {
+  return withPayrollRunSchemaFallback(
+    async () => {
+      const run = await prisma.payroll_runs.findFirst({
+        where: {
+          company_id: companyId,
+          period_start: toDate(range.startDate),
+          period_end: toDate(range.endDate),
+          status: { in: ["LOCKED", "PAID"] },
+        },
+        orderBy: { id: "desc" },
+        select: { id: true },
+      });
+      if (!run) return [];
+      return prisma.payroll_run_items.findMany({
+        where: {
+          payroll_run_id: run.id,
+          company_id: companyId,
+          ...(employeeCode
+            ? { employee_code_snapshot: normalizeEmployeeCode(employeeCode) }
+            : {}),
+        },
+        orderBy: { employee_code_snapshot: "asc" },
+      });
+    },
+    () => []
+  );
 }
 
 /**
@@ -309,13 +476,16 @@ export const getPayrollSummary = async (
   if (companyId == null) {
     throw new Error("companyId is required for payroll calculation");
   }
-  const wage = await getActiveWageConfig(companyId);
 
   const companyCodes = await getCompanyEmployeeCodes(companyId);
   if (companyCodes.length === 0) return [];
 
   // Serve from immutable snapshot if the period has been locked.
   if (!includeDraft) {
+    const runItems = await getLockedRunItems(companyId, range);
+    if (runItems.length > 0) {
+      return runItems.map(formatRunItemAsPayrollRow);
+    }
     const lockKeys = [
       buildPayrollLockKey(companyId, range),
       buildLegacyPayrollLockKey(range),
@@ -341,6 +511,8 @@ export const getPayrollSummary = async (
   }
 
   // Live calculation — resolve company_id per employee then apply company wage.
+  const wage = await getActiveWageConfig(companyId);
+  await assertUniqueCompanyPayrollProfiles(companyId);
   const rows = await prisma.$queryRaw<any[]>(buildPayrollSql(range, includeDraft, undefined, companyId, companyCodes));
 
   if (process.env.NODE_ENV !== "production" && rows.length > 0) {
@@ -366,12 +538,15 @@ export const getPayrollByEmployeeCode = async (
   if (companyId == null) {
     throw new Error("companyId is required for payroll calculation");
   }
-  const wage = await getActiveWageConfig(companyId);
 
   const companyCodes = await getCompanyEmployeeCodes(companyId);
   if (!companyCodes.includes(employeeCode)) return null;
 
   if (!includeDraft) {
+    const runItems = await getLockedRunItems(companyId, range, employeeCode);
+    if (runItems.length > 0) {
+      return formatRunItemAsPayrollRow(runItems[0]);
+    }
     const lockKeys = [
       buildPayrollLockKey(companyId, range),
       buildLegacyPayrollLockKey(range),
@@ -388,6 +563,8 @@ export const getPayrollByEmployeeCode = async (
     }
   }
 
+  const wage = await getActiveWageConfig(companyId);
+  await assertUniqueCompanyPayrollProfiles(companyId);
   const rows = await prisma.$queryRaw<any[]>(
     buildPayrollSql(range, includeDraft, employeeCode, companyId, companyCodes)
   );
@@ -412,6 +589,7 @@ export const getPayrollSummaryLive = async (
   configuredWage?: WageConfig
 ) => {
   validateDateRange(range);
+  await assertUniqueCompanyPayrollProfiles(companyId, db);
   const wage = configuredWage ?? (await getActiveWageConfig(companyId, db));
   const companyCodes = await getCompanyEmployeeCodes(companyId, db);
   if (companyCodes.length === 0) return [];

@@ -1,6 +1,9 @@
-import { useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
+  Building2,
+  ChevronLeft,
+  ChevronRight,
   Home,
   UsersRound,
   CalendarRange,
@@ -9,6 +12,8 @@ import {
   LogOut,
   Menu,
   X,
+  Moon,
+  Sun,
   type LucideIcon,
 } from "lucide-react";
 
@@ -16,15 +21,17 @@ import { useAuth } from "@/store/auth";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { canAccessRole } from "@/lib/authz";
+import { useTheme } from "next-themes";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Role } from "@/types/domain";
 
 const ROLE_LABELS: Record<string, string> = {
-  admin: "Administrator",
-  hr: "HR",
-  accounting: "Accounting",
-  field_staff: "Field Staff",
-  viewer: "Viewer",
-  cyd_admin: "CYD Administrator",
+  admin: "ผู้ดูแลบริษัท",
+  hr: "ฝ่ายบุคคล",
+  accounting: "ฝ่ายบัญชี",
+  field_staff: "เจ้าหน้าที่ภาคสนาม",
+  viewer: "ผู้ดูข้อมูล",
+  cyd_admin: "ผู้ดูแลระบบ CYD",
 };
 
 type NavItem = {
@@ -49,9 +56,10 @@ const NAV_SECTIONS: NavSection[] = [
   {
     section: "OPERATIONS",
     items: [
-      { to: "/field-attendance", label: "บันทึกเข้าออกงาน", icon: MapPin, roles: ["admin", "field_staff"] },
-      { to: "/payroll", label: "เงินเดือน", icon: Banknote, roles: ["cyd_admin", "admin", "accounting"] },
-      { to: "/attendance", label: "ประวัติการบันทึกเข้าออกงาน", icon: CalendarRange, roles: ["cyd_admin", "admin", "hr"] },
+      { to: "/field-attendance", label: "บันทึกเข้าออกงาน", icon: MapPin, roles: ["admin", "hr", "field_staff"] },
+      { to: "/payroll", label: "เงินเดือน", icon: Banknote, roles: ["cyd_admin", "admin", "hr", "accounting"] },
+      { to: "/payroll-runs", label: "รอบเงินเดือน", icon: CalendarRange, roles: ["cyd_admin", "admin", "hr", "accounting"] },
+      { to: "/attendance", label: "ประวัติการบันทึกเข้าออกงาน", icon: CalendarRange, roles: ["cyd_admin", "admin", "hr", "accounting"] },
     ],
   },
   {
@@ -67,7 +75,12 @@ const NAV_SECTIONS: NavSection[] = [
 export default function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const { resolvedTheme, setTheme } = useTheme();
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem("payroll_sidebar_collapsed") === "true"
+  );
   const visibleSections = NAV_SECTIONS.map((section) => ({
     ...section,
     items: section.items.filter((item) => canAccessRole(user?.role, item.roles)),
@@ -78,34 +91,46 @@ export default function AppLayout() {
     navigate("/login");
   };
 
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    localStorage.setItem("payroll_sidebar_collapsed", String(collapsed));
+  }, [collapsed]);
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [mobileOpen]);
+
   return (
-    <div className="h-screen bg-[#f4f6f9] flex overflow-hidden">
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/50 lg:hidden"
-          onClick={() => setOpen(false)}
+    <div className="flex h-dvh min-h-[568px] overflow-hidden bg-background">
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="ปิดเมนูนำทาง"
+          className="fixed inset-0 z-40 cursor-default bg-slate-950/55 backdrop-blur-[1px] lg:hidden"
+          onClick={() => setMobileOpen(false)}
         />
       )}
 
       <aside
+        aria-label="เมนูหลัก"
         className={cn(
-          `
-          fixed lg:static inset-y-0 left-0 z-50
-          w-72 shrink-0
-          bg-[#1e3a8a] text-white
-          flex flex-col
-          transition-transform duration-300
-          lg:translate-x-0
-          shadow-2xl
-          no-print
-          `,
-          open ? "translate-x-0" : "-translate-x-full"
+          "no-print fixed inset-y-0 left-0 z-50 flex w-[min(19rem,calc(100vw-2rem))] shrink-0 flex-col border-r border-white/15 bg-[linear-gradient(180deg,#0D9488_0%,#0891B2_55%,#2563EB_100%)] dark:bg-[var(--sidebar-gradient)] text-white shadow-2xl transition-[transform,width] duration-200 lg:static lg:translate-x-0 lg:shadow-none",
+          mobileOpen ? "translate-x-0" : "-translate-x-full",
+          collapsed ? "lg:w-[5.25rem]" : "lg:w-72"
         )}
       >
-        <div className="p-6 border-b border-white/10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-2xl bg-white p-1.5 shadow-lg flex items-center justify-center">
+        <div className={cn("border-b border-white/15 p-4", !collapsed && "lg:p-5")}>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-card">
                 <img
                   src="/388286.jpg"
                   alt="A&T World"
@@ -113,62 +138,59 @@ export default function AppLayout() {
                 />
               </div>
 
-              <div>
-                <h1 className="font-bold text-lg text-white leading-tight">
+              <div className={cn("min-w-0", collapsed && "lg:hidden")}>
+                <h1 className="truncate text-lg font-bold leading-tight text-white">
                   PayrollPro
                 </h1>
-                <p className="text-xs text-blue-100">
-                  Enterprise HR
+                <p className="truncate text-xs text-white/70">
+                  Enterprise Payroll
                 </p>
               </div>
             </div>
 
             <button
-              className="lg:hidden text-white/80 hover:text-white"
-              onClick={() => setOpen(false)}
+              type="button"
+              aria-label="ปิดเมนู"
+              className="flex h-11 w-11 items-center justify-center rounded-xl text-white/80 hover:bg-white/10 hover:text-white lg:hidden"
+              onClick={() => setMobileOpen(false)}
             >
               <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 space-y-4 overflow-y-auto overscroll-contain p-3">
           {visibleSections.map((section, si) => (
-            <div key={si} className={si > 0 ? "pt-3" : ""}>
+            <div key={section.section ?? "main"}>
+              {section.section && !collapsed && (
+                <p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[0.16em] text-white/55">
+                  {section.section === "OPERATIONS" ? "งานประจำ" : "การจัดการ"}
+                </p>
+              )}
               <div className="space-y-1">
                 {section.items.map((item) => (
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    onClick={() => setOpen(false)}
+                    title={collapsed ? item.label : undefined}
                     className={({ isActive }) =>
                       cn(
-                        `
-                        group flex items-center gap-3
-                        px-4 py-3 rounded-2xl
-                        text-sm font-semibold
-                        transition-all duration-200
-                        `,
+                        "group flex min-h-11 items-center gap-3 rounded-xl px-3 text-sm font-semibold transition-colors",
+                        collapsed && "lg:justify-center lg:px-0",
                         isActive
-                          ? `
-                          bg-[#1e40af]
-                          text-white
-                          shadow-lg
-                          `
-                          : `
-                          text-blue-100/90
-                          hover:bg-white/10
-                          hover:text-white
-                          `
+                          ? "bg-white/20 text-white shadow-sm ring-1 ring-inset ring-white/20"
+                          : "text-white/85 hover:bg-white/10 hover:text-white"
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
                         <item.icon className="h-5 w-5 shrink-0" />
-                        <span>{item.label}</span>
+                        <span className={cn("min-w-0 truncate", collapsed && "lg:hidden")}>
+                          {item.label}
+                        </span>
                         {isActive && (
-                          <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#60a5fa]" />
+                          <span className={cn("ml-auto h-1.5 w-1.5 rounded-full bg-white shadow-[0_0_10px_rgba(255,255,255,0.8)]", collapsed && "lg:hidden")} />
                         )}
                       </>
                     )}
@@ -179,72 +201,103 @@ export default function AppLayout() {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-white/10">
-          <div className="mb-4">
-            <p className="font-semibold text-sm text-white truncate">
+        <div className="safe-bottom border-t border-white/15 p-3">
+          <div className={cn("mb-3 min-w-0 rounded-xl border border-white/15 bg-white/10 p-3", collapsed && "lg:hidden")}>
+            <p className="truncate text-sm font-semibold text-white">
               {user?.username}
             </p>
 
-            <p className="text-xs text-blue-100">
+            <p className="text-xs text-white/70">
               {ROLE_LABELS[user?.role ?? ""] ?? user?.role}
             </p>
           </div>
 
           <Button
             variant="outline"
-            className="
-              w-full rounded-xl
-              bg-white/10
-              text-white
-              border-white/20
-              hover:bg-white/20
-              hover:text-white
-            "
+            title={collapsed ? "ออกจากระบบ" : undefined}
+            aria-label={collapsed ? "ออกจากระบบ" : undefined}
+            className={cn("w-full border-white/20 bg-white/5 text-white shadow-none hover:border-white/30 hover:bg-white/15 hover:text-white", collapsed && "lg:px-0")}
             onClick={handleLogout}
           >
-            <LogOut className="h-4 w-4 mr-2" />
-            ออกจากระบบ
+            <LogOut className="h-4 w-4" />
+            <span className={cn(collapsed && "lg:hidden")}>ออกจากระบบ</span>
           </Button>
         </div>
       </aside>
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex min-w-0 flex-1 flex-col">
         <header
-          className="
-          h-16
-          border-b border-[#dbe4f0]
-          bg-white/80 backdrop-blur-xl
-          flex items-center justify-between
-          px-4
-          lg:hidden
-          no-print
-        "
+          className="no-print sticky top-0 z-30 flex h-[4.25rem] shrink-0 items-center justify-between gap-3 border-b border-border bg-card/90 px-3 backdrop-blur-md sm:px-5"
         >
-          <button onClick={() => setOpen(true)}>
-            <Menu className="h-6 w-6 text-[#1e3a8a]" />
-          </button>
-
-          <div className="flex items-center gap-2">
-            <div className="h-9 w-9 rounded-xl bg-white p-1 shadow flex items-center justify-center">
-              <img
-                src="/388286.jpg"
-                alt="A&T World"
-                className="h-full w-full object-contain"
-              />
+          <div className="flex min-w-0 items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="เปิดเมนูนำทาง"
+              className="lg:hidden"
+              onClick={() => setMobileOpen(true)}
+            >
+              <Menu className="h-5 w-5 text-primary" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={collapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
+              title={collapsed ? "ขยายแถบเมนู" : "ย่อแถบเมนู"}
+              className="hidden lg:inline-flex"
+              onClick={() => setCollapsed((value) => !value)}
+            >
+              {collapsed ? <ChevronRight /> : <ChevronLeft />}
+            </Button>
+            <div className="hidden min-w-0 sm:block">
+              <p className="truncate text-sm font-semibold text-foreground">
+                ระบบบริหารเงินเดือน
+              </p>
+              <p className="truncate text-xs text-muted-foreground">
+                {user?.companyId ? `บริษัท #${user.companyId}` : "ภาพรวมระบบ"}
+              </p>
             </div>
-
-            <span className="font-bold text-[#0f172a]">
-              PayrollPro
-            </span>
           </div>
 
-          <div className="w-6" />
+          <div className="flex min-w-0 items-center gap-2">
+            {user?.companyId && (
+              <span className="hidden max-w-40 items-center gap-1.5 truncate rounded-full border border-teal-200 bg-teal-50 px-3 py-1.5 text-xs font-semibold text-teal-800 md:flex">
+                <Building2 className="h-3.5 w-3.5 shrink-0" />
+                บริษัท #{user.companyId}
+              </span>
+            )}
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={resolvedTheme === "dark" ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
+                    className="shrink-0 text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                  >
+                    {resolvedTheme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {resolvedTheme === "dark" ? "เปลี่ยนเป็นโหมดสว่าง" : "เปลี่ยนเป็นโหมดมืด"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <div className="min-w-0 text-right">
+              <p className="max-w-28 truncate text-sm font-semibold text-foreground sm:max-w-48">
+                {user?.username}
+              </p>
+              <p className="hidden max-w-48 truncate text-xs text-muted-foreground sm:block">
+                {ROLE_LABELS[user?.role ?? ""] ?? user?.role}
+              </p>
+            </div>
+          </div>
         </header>
 
-        <main className="flex-1 overflow-x-hidden overflow-y-auto">
-          <div className="w-full max-w-[1600px] mx-auto">
-            <Outlet />
-          </div>
+        <main id="main-content" className="flex-1 overflow-x-hidden overflow-y-auto bg-background">
+          <Outlet />
         </main>
       </div>
     </div>

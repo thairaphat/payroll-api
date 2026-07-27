@@ -14,6 +14,10 @@ import {
   getPayrollSummaryLive,
   type PayrollDateRange,
 } from "./payroll.service";
+import {
+  isUsableEmployeeName,
+  normalizeEmployeeCode,
+} from "../../utils/employee-profile";
 
 export type PayrollLockInput = {
   date?: string;
@@ -27,9 +31,11 @@ export class PayrollLockError extends Error {
     public readonly code:
       | "COMPANY_SCOPE_MISMATCH"
       | "NO_ELIGIBLE_ATTENDANCE"
-      | "PAYROLL_ALREADY_LOCKED",
+      | "PAYROLL_ALREADY_LOCKED"
+      | "PAYROLL_EMPLOYEE_PROFILE_MISSING",
     message: string,
-    public readonly status: 403 | 409 | 422
+    public readonly status: 403 | 409 | 422,
+    public readonly employeeCodes?: string[]
   ) {
     super(message);
     this.name = "PayrollLockError";
@@ -65,6 +71,8 @@ type PayrollLockRow = Record<string, unknown> & {
   gross_income?: number;
   deduction_amount?: number;
   net_income?: number;
+  employee_profile_status?: "FOUND" | "NOT_FOUND";
+  employeeProfileStatus?: "FOUND" | "NOT_FOUND";
 };
 
 type TransactionRunner = {
@@ -253,6 +261,28 @@ export async function executePayrollLock(
         "NO_ELIGIBLE_ATTENDANCE",
         "No eligible employees or approved attendance found in this company scope.",
         422
+      );
+    }
+    const missingProfileCodes = [
+      ...new Set(
+        rows
+          .filter(
+            (row) =>
+              (row.employee_profile_status ?? row.employeeProfileStatus) !==
+                "FOUND" || !isUsableEmployeeName(row.employee_name ?? row.employeeName)
+          )
+          .map((row) =>
+            normalizeEmployeeCode(row.employee_code ?? row.employeeCode)
+          )
+          .filter(Boolean)
+      ),
+    ];
+    if (missingProfileCodes.length > 0) {
+      throw new PayrollLockError(
+        "PAYROLL_EMPLOYEE_PROFILE_MISSING",
+        "Payroll contains attendance records without a complete employee profile.",
+        422,
+        missingProfileCodes
       );
     }
 

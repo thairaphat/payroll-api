@@ -13,7 +13,6 @@ import {
   TEST_EMPLOYEE_NAME,
   FIELD_APP_SHEET_ID,
   TEST_RECORD_WHERE,
-  APPROVAL_STATUS,
 } from "../../constants/attendance";
 import {
   getActiveWageConfig,
@@ -22,6 +21,12 @@ import {
 import { logRouteEnter, logApiError } from "../../diag";
 import { hasEmployeeCodes } from "../../utils/company-scope";
 import { logRequiredAudit } from "../../services/audit.service";
+import {
+  getBangkokDateKey,
+  summarizeTodayFieldAttendance,
+  toDatabaseDate,
+  type DashboardAttendanceRow,
+} from "./dashboard-attendance.service";
 
 export const dashboardRoute = new Elysia().get(
   "/dashboard/summary",
@@ -158,12 +163,9 @@ export const dashboardRoute = new Elysia().get(
     });
 
     // ── 5. Today's field attendance — filtered to company employee codes ──────
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(todayStart);
-    todayEnd.setDate(todayEnd.getDate() + 1);
+    const todayDate = toDatabaseDate(getBangkokDateKey());
 
-    let todayFieldRaw: Array<{ approval_status: string | null; updated_at: Date | null }>;
+    let todayFieldRaw: DashboardAttendanceRow[];
     try {
       todayFieldRaw =
         companyCodes.length === 0
@@ -171,11 +173,15 @@ export const dashboardRoute = new Elysia().get(
           : await prisma.attendance_records.findMany({
               where: {
                 source_sheet_id: FIELD_APP_SHEET_ID,
-                work_date: { gte: todayStart, lt: todayEnd },
+                work_date: todayDate,
                 employee_code: { in: companyCodes },
                 NOT: [...TEST_RECORD_WHERE],
               },
-              select: { approval_status: true, updated_at: true },
+              select: {
+                employee_code: true,
+                approval_status: true,
+                updated_at: true,
+              },
               orderBy: { updated_at: "desc" },
             });
       console.log(`[dashboard] step=todayFieldAttendance records=${todayFieldRaw.length} companyCodes=${companyCodes.length}`);
@@ -184,19 +190,7 @@ export const dashboardRoute = new Elysia().get(
       throw err;
     }
 
-    const todayFieldEntry = {
-      total: todayFieldRaw.length,
-      draft: todayFieldRaw.filter(
-        (r) => r.approval_status === APPROVAL_STATUS.DRAFT
-      ).length,
-      submitted: todayFieldRaw.filter(
-        (r) => r.approval_status === APPROVAL_STATUS.SUBMITTED
-      ).length,
-      approved: todayFieldRaw.filter(
-        (r) => r.approval_status === APPROVAL_STATUS.APPROVED
-      ).length,
-      latestEntry: todayFieldRaw[0]?.updated_at ?? null,
-    };
+    const todayFieldEntry = summarizeTodayFieldAttendance(todayFieldRaw);
 
     // ── 6. Return company-scoped summary ──────────────────────────────────────
     return {

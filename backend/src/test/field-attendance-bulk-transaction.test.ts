@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   FIELD_ATTENDANCE_BATCH_LIMIT,
   saveFieldAttendanceBatch,
+  validateFieldAttendanceBatch,
 } from "../modules/attendance/field-attendance.service";
 
 const user = {
@@ -25,12 +26,22 @@ function record(code: string) {
 }
 
 function transactionHarness(options: {
-  profiles?: Array<{ emp_code: string; company_id: number }>;
+  profiles?: Array<{
+    emp_code: string;
+    company_id: number;
+    first_name?: string;
+    last_name?: string;
+  }>;
   existing?: any[];
   failWriteAt?: number;
   failAudit?: boolean;
 } = {}) {
   const committed: string[] = [];
+  const writes: Array<{
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+    where: Record<string, unknown>;
+  }> = [];
   let txValue: unknown;
   const runner = {
     $transaction: async (operation: (tx: any) => Promise<any>) => {
@@ -40,16 +51,25 @@ function transactionHarness(options: {
         employee_document_profiles: {
           findMany: async () =>
             options.profiles ?? [
-              { emp_code: "E001", company_id: 16 },
-              { emp_code: "E002", company_id: 16 },
+              { emp_code: "E001", company_id: 16, first_name: "Employee", last_name: "One" },
+              { emp_code: "E002", company_id: 16, first_name: "Employee", last_name: "Two" },
             ],
         },
         attendance_records: {
           findMany: async () => options.existing ?? [],
-          upsert: async ({ create }: any) => {
+          upsert: async ({
+            create,
+            update,
+            where,
+          }: {
+            create: Record<string, unknown>;
+            update: Record<string, unknown>;
+            where: Record<string, unknown>;
+          }) => {
             write += 1;
             if (write === options.failWriteAt) throw new Error("write failed");
-            pending.push(create.employee_code);
+            writes.push({ create, update, where });
+            pending.push(String(create.employee_code));
             return {};
           },
         },
@@ -67,7 +87,7 @@ function transactionHarness(options: {
       return result;
     },
   };
-  return { runner, committed, get tx() { return txValue; } };
+  return { runner, committed, writes, get tx() { return txValue; } };
 }
 
 describe("field attendance bulk transaction", () => {
@@ -230,5 +250,158 @@ describe("field attendance bulk transaction", () => {
       )
     ).rejects.toMatchObject({ code: "BATCH_LIMIT_EXCEEDED", status: 413 });
     expect(transactions).toBe(0);
+  });
+
+  it("ATT-OT-001 persists two OT2 hours and the matching total", async () => {
+    const harness = transactionHarness();
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ ...record("E001"), ot1: 0, ot2: 2 }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].create).toMatchObject({ ot2: 2, ot_hours: 2 });
+  });
+
+  it("ATT-OT-003 updating only note preserves existing OT", async () => {
+    const harness = transactionHarness({
+      existing: [
+        {
+          employee_code: "E001",
+          approval_status: "draft",
+          payroll_locked_at: null,
+          created_by: 9,
+          ot1: 2,
+          ot15: 0,
+          ot2: 0,
+        },
+      ],
+    });
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ employee_code: "E001", note: "updated" }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].update).toMatchObject({ ot1: 2, ot_hours: 2 });
+  });
+
+  it("ATT-OT-004 updating only start time preserves existing OT", async () => {
+    const harness = transactionHarness({
+      existing: [
+        {
+          employee_code: "E001",
+          approval_status: "draft",
+          payroll_locked_at: null,
+          created_by: 9,
+          ot1: 0,
+          ot15: 0,
+          ot2: 1,
+        },
+      ],
+    });
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ employee_code: "E001", start_time: "09:00" }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].update).toMatchObject({ ot2: 1, ot_hours: 1 });
+  });
+
+  it("ATT-OT-005 bulk save keeps two employees separate", async () => {
+    const harness = transactionHarness();
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [
+          { ...record("E001"), ot1: 2 },
+          { ...record("E002"), ot1: 1 },
+        ],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes.map((write) => write.create.ot1)).toEqual([2, 1]);
+  });
+
+  it("ATT-OT-006 uses the complete normalized code, not a display suffix", async () => {
+    const harness = transactionHarness({
+      profiles: [
+        {
+          emp_code: "CYD31193",
+          company_id: 16,
+          first_name: "Employee",
+          last_name: "One",
+        },
+        {
+          emp_code: "OTHER193",
+          company_id: 18,
+          first_name: "Employee",
+          last_name: "Other",
+        },
+      ],
+    });
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ ...record("cyd31193"), ot1: 2 }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].create.employee_code).toBe("CYD31193");
+    expect(harness.writes[0].where).toMatchObject({
+      uniq_attendance: { employee_code: "CYD31193" },
+    });
+  });
+
+  it("ATT-OT-013 saves OT category and hours together", async () => {
+    const harness = transactionHarness();
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ ...record("E001"), ot1: 0, ot15: 2 }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].create).toMatchObject({ ot15: 2, ot_hours: 2 });
+  });
+
+  it("ATT-OT-014 preserves decimal OT hours", async () => {
+    const harness = transactionHarness();
+    await saveFieldAttendanceBatch(
+      {
+        date: "2026-07-24",
+        records: [{ ...record("E001"), ot1: 1.5 }],
+      },
+      user,
+      16,
+      harness.runner
+    );
+    expect(harness.writes[0].create).toMatchObject({
+      ot1: 1.5,
+      ot_hours: 1.5,
+    });
+  });
+
+  it("ATT-OT-018 preserves the selected Bangkok calendar date", () => {
+    const validated = validateFieldAttendanceBatch("2026-07-24", [
+      record("E001"),
+    ]);
+    expect(validated.workDate.toISOString().slice(0, 10)).toBe("2026-07-24");
   });
 });

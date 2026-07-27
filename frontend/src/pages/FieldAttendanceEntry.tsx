@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,20 @@ import { format, subDays } from "date-fns";
 import { getFieldAttendance, saveFieldAttendance, getCompanies } from "@/services/field-attendance.service";
 import { cn } from "@/lib/utils";
 import { authFetch } from "@/lib/authz";
+import { EmployeeProfileName } from "@/components/employee/EmployeeProfileName";
+import {
+  isEmployeeProfileMissing,
+  isUsableEmployeeName,
+} from "@/lib/employee-profile";
+import {
+  getPersistedOtSummary,
+  getEmployeeCodeDisplay,
+  materializePendingOt,
+  normalizeFieldAttendanceRecord,
+  type FieldAttendanceRecord,
+  type PendingOtInput,
+  type ProfileStatus,
+} from "@/lib/field-attendance";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:3001";
 
@@ -43,23 +58,40 @@ const OT_TYPE_OPTIONS = [
   { label: "OT 2", field: "ot2" },
 ];
 
+type EmployeeSearchResult = Partial<FieldAttendanceRecord> & {
+  emp_code?: string;
+  display_name?: string | null;
+  full_name_th?: string | null;
+  full_name_en?: string | null;
+  company_name?: string;
+};
+
+type CompanyOption = {
+  id: number;
+  company_name?: string;
+  name?: string;
+};
+
 export default function FieldAttendanceEntry() {
+  const queryClient = useQueryClient();
   const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [records, setRecords] = useState<any[]>([]);
+  const [records, setRecords] = useState<FieldAttendanceRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
-  const [allEmployees, setAllEmployees] = useState<any[]>([]);
-  const [companies, setCompanies] = useState<any[]>([]);
+  const [allEmployees, setAllEmployees] = useState<EmployeeSearchResult[]>([]);
+  const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [selectedCompany, setSelectedCompany] = useState("");
   const [isSearching, setIsSearching] = useState(false);
   const [viewMode, setViewMode] = useState<"table" | "card">("table");
 
   // Local state for OT Entry inputs (per employee_code)
-  const [otInputs, setOtInputs] = useState<Record<string, { type: string, hours: string }>>({});
+  const [otInputs, setOtInputs] = useState<Record<string, PendingOtInput>>({});
 
   useEffect(() => {
     fetchRecords();
+    // fetchRecords intentionally follows the selected date.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date]);
 
   useEffect(() => {
@@ -96,19 +128,28 @@ export default function FieldAttendanceEntry() {
   };
 
   // Safe string coercion — guards against null/undefined fields from incomplete DB records.
-  const safeStr = (v: any): string => (v === null || v === undefined ? "" : String(v));
+  const safeStr = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
 
-  const createRecordObject = (emp: any) => {
+  const createRecordObject = (emp: EmployeeSearchResult): FieldAttendanceRecord => {
     const employeeCode = safeStr(emp?.emp_code) || safeStr(emp?.employee_code);
     const firstName = safeStr(emp?.first_name);
     const lastName = safeStr(emp?.last_name);
+    const officialName =
+      safeStr(emp?.employee_name) ||
+      safeStr(emp?.display_name) ||
+      safeStr(emp?.full_name_th) ||
+      safeStr(emp?.full_name_en) ||
+      `${firstName} ${lastName}`.trim();
 
     return {
       employee_code: employeeCode,
       employee_code_13: safeStr(emp?.employee_code_13),
       first_name: firstName,
       last_name: lastName,
-      employee_name: `${firstName} ${lastName}`.trim(),
+      employee_name: isUsableEmployeeName(officialName) ? officialName : null,
+      employee_profile_status:
+        (emp?.employee_profile_status as ProfileStatus | undefined) ??
+        (isUsableEmployeeName(officialName) ? "FOUND" : "NOT_FOUND"),
       branch_code: safeStr(emp?.branch_code),
       start_time: "08:00",
       work_time: "08:00-17:00",
@@ -124,31 +165,19 @@ export default function FieldAttendanceEntry() {
 
   // Normalize records arriving from the API/DB so every string/number/boolean field
   // is guaranteed safe — prevents undefined.slice() crashes and controlled-input warnings.
-  const normalizeRecord = (r: any) => ({
-    ...r,
-    employee_code: safeStr(r?.employee_code) || safeStr(r?.emp_code),
-    employee_code_13: safeStr(r?.employee_code_13),
-    first_name: safeStr(r?.first_name),
-    last_name: safeStr(r?.last_name),
-    employee_name:
-      safeStr(r?.employee_name) ||
-      `${safeStr(r?.first_name)} ${safeStr(r?.last_name)}`.trim(),
-    branch_code: safeStr(r?.branch_code),
-    start_time: safeStr(r?.start_time) || "08:00",
-    work_time: safeStr(r?.work_time) || "08:00-17:00",
-    work_type_2: safeStr(r?.work_type_2),
-    note: safeStr(r?.note),
-    ot1: Number(r?.ot1 ?? 0) || 0,
-    ot15: Number(r?.ot15 ?? 0) || 0,
-    ot2: Number(r?.ot2 ?? 0) || 0,
-    half_day: Boolean(r?.half_day),
-    leave_day: Boolean(r?.leave_day),
-  });
+  const normalizeRecord = (r: Record<string, unknown>) =>
+    normalizeFieldAttendanceRecord(r, isUsableEmployeeName);
 
-  const normalizeRecords = (data: any): any[] =>
-    Array.isArray(data) ? data.map(normalizeRecord) : [];
+  const normalizeRecords = (data: unknown): FieldAttendanceRecord[] =>
+    Array.isArray(data)
+      ? data.map((row) => normalizeRecord(row as Record<string, unknown>))
+      : [];
 
-  const handleAddEmployee = (emp: any) => {
+  const handleAddEmployee = (emp: EmployeeSearchResult) => {
+    if (isEmployeeProfileMissing(createRecordObject(emp))) {
+      toast.warning("ไม่พบข้อมูลพนักงานรหัสนี้ในบริษัทปัจจุบัน");
+      return;
+    }
     if (records.find(r => r.employee_code === (emp.emp_code || emp.employee_code))) {
       toast.warning("พนักงานคนนี้อยู่ในรายการแล้ว");
       return;
@@ -163,6 +192,7 @@ export default function FieldAttendanceEntry() {
     const companyEmployees = allEmployees.filter(e => e.company_name === selectedCompany);
     const newRecords = companyEmployees
       .filter(emp => !records.find(r => r.employee_code === emp.emp_code))
+      .filter(emp => !isEmployeeProfileMissing(createRecordObject(emp)))
       .map(createRecordObject);
     
     if (newRecords.length === 0) {
@@ -178,7 +208,7 @@ export default function FieldAttendanceEntry() {
     setRecords(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleUpdateRecord = (index: number, field: string, value: any) => {
+  const handleUpdateRecord = (index: number, field: string, value: unknown) => {
     const updated = [...records];
     updated[index] = { ...updated[index], [field]: value };
 
@@ -191,23 +221,22 @@ export default function FieldAttendanceEntry() {
   const handleAddOT = (index: number) => {
     const empCode = records[index].employee_code;
     const input = otInputs[empCode] || { type: "ot1", hours: "" };
-    const hours = parseFloat(input.hours);
-
-    if (isNaN(hours) || hours <= 0) {
+    let updated: FieldAttendanceRecord[];
+    try {
+      updated = materializePendingOt(records, { [empCode]: input });
+    } catch {
       toast.error("กรุณากรอกจำนวนชั่วโมงให้ถูกต้อง");
       return;
     }
-
-    const field = input.type;
-    const currentVal = Number(records[index][field] || 0);
-    handleUpdateRecord(index, field, currentVal + hours);
+    const hours = Number(input.hours);
+    setRecords(updated);
 
     setOtInputs(prev => ({
       ...prev,
       [empCode]: { ...input, hours: "" }
     }));
 
-    const label = OT_TYPE_OPTIONS.find(o => o.field === field)?.label;
+    const label = OT_TYPE_OPTIONS.find(o => o.field === input.type)?.label;
     toast.success(`บวกเพิ่ม ${label} จำนวน ${hours} ชม. แล้ว`);
   };
 
@@ -233,7 +262,7 @@ export default function FieldAttendanceEntry() {
         loading: "กำลังดึงข้อมูลวันก่อนหน้า...",
         success: (data) => {
           if (!Array.isArray(data) || data.length === 0) return "ไม่พบข้อมูลวันก่อนหน้า";
-          setRecords(normalizeRecords(data).map((r: any) => ({ ...r, id: undefined, work_date: date })));
+          setRecords(normalizeRecords(data).map((r) => ({ ...r, id: undefined, work_date: date })));
           return `คัดลอกข้อมูลจากวันที่ ${prevDate} สำเร็จ`;
         },
         error: "โหลดข้อมูลล้มเหลว"
@@ -243,6 +272,9 @@ export default function FieldAttendanceEntry() {
 
   const validateRecords = () => {
     for (const r of records) {
+      if (isEmployeeProfileMissing(r)) {
+        return "ไม่พบข้อมูลพนักงานรหัสนี้ในบริษัทปัจจุบัน";
+      }
       if (!r.employee_code) return "พบรายการที่ไม่มีรหัสพนักงาน";
       if (r.half_day && r.leave_day) return `พนักงาน ${r.employee_name} ไม่สามารถเลือกทั้ง 'ครึ่งวัน' และ 'ลา/ขาด' พร้อมกันได้`;
     }
@@ -256,9 +288,21 @@ export default function FieldAttendanceEntry() {
       return;
     }
 
+    let recordsToSave: FieldAttendanceRecord[];
+    try {
+      recordsToSave = materializePendingOt(records, otInputs);
+    } catch {
+      toast.error("กรุณาตรวจสอบประเภทและจำนวนชั่วโมง OT");
+      return;
+    }
+
     try {
       setSaving(true);
-      await saveFieldAttendance(date, records);
+      await saveFieldAttendance(date, recordsToSave);
+      const persisted = await getFieldAttendance(date);
+      setRecords(normalizeRecords(persisted));
+      setOtInputs({});
+      await queryClient.invalidateQueries({ queryKey: ["dashboard-summary"] });
       toast.success("บันทึกข้อมูลหน้างานสำเร็จ");
     } catch (error) {
       toast.error("บันทึกข้อมูลไม่สำเร็จ");
@@ -269,32 +313,37 @@ export default function FieldAttendanceEntry() {
 
   const filteredEmployees = search.length >= 2 
     ? Array.from(new Map(allEmployees
-        .filter(emp => emp.first_name?.toLowerCase().includes(search.toLowerCase()) || emp.emp_code?.toLowerCase().includes(search.toLowerCase()))
+        .filter(emp =>
+          emp.first_name?.toLowerCase().includes(search.toLowerCase()) ||
+          emp.employee_name?.toLowerCase().includes(search.toLowerCase()) ||
+          emp.display_name?.toLowerCase().includes(search.toLowerCase()) ||
+          emp.emp_code?.toLowerCase().includes(search.toLowerCase())
+        )
         .map(e => [e.emp_code || e.employee_code, e])).values()
       ).slice(0, 8)
     : [];
 
   return (
-    <div className="min-h-screen bg-[#f4f6f9]">
+    <div className="min-h-screen bg-background">
       <div className="p-4 sm:p-6 lg:p-8 space-y-6">
         {/* --- HEADER --- */}
         <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
           <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-3xl bg-[#1e3a8a] shadow-lg shadow-blue-200 flex items-center justify-center shrink-0">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#14B8A6,#2563EB)] text-white shadow-card">
               <UserCheck className="h-7 w-7 text-white" />
             </div>
             <div>
               <h1 className="text-3xl font-black tracking-tight text-slate-900">บันทึกหน้างาน</h1>
               <div className="flex items-center gap-2 mt-1 text-slate-500 text-sm font-medium">
                 <Building2 className="h-4 w-4" />
-                <span>Field Entry Assistant</span>
+                <span>ผู้ช่วยบันทึกเวลาเข้าทำงานภาคสนาม</span>
               </div>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-3 bg-white px-5 py-2.5 rounded-2xl border border-[#e5e7eb] shadow-sm">
-              <CalendarIcon className="h-5 w-5 text-[#1e3a8a]" />
+              <CalendarIcon className="h-5 w-5 text-teal-700" />
               <input
                 type="date"
                 value={date}
@@ -305,7 +354,7 @@ export default function FieldAttendanceEntry() {
             <Button
               onClick={handleSave}
               disabled={saving || loading || records.length === 0}
-              className="rounded-2xl bg-[#1e3a8a] hover:bg-[#162a64] text-white shadow-lg h-11 px-6 font-bold transition-all hover:-translate-y-0.5 active:scale-95"
+              className="h-11 px-6"
             >
               {saving ? <Loader2 className="h-5 w-5 mr-2 animate-spin" /> : <Save className="h-5 w-5 mr-2" />}
               บันทึก {records.length > 0 && `(${records.length})`}
@@ -314,8 +363,8 @@ export default function FieldAttendanceEntry() {
         </header>
 
         {/* --- QUICK ACTIONS --- */}
-        {/* <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-2xl border border-[#e5e7eb] border-l-4 border-l-[#1e3a8a] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
-          <span className="text-xs font-bold text-slate-400 uppercase tracking-widest px-2">Quick Actions:</span>
+        {/* <div className="flex flex-wrap items-center gap-3 bg-white p-3 rounded-2xl border border-[#D9E7EA] border-l-4 border-l-[#0D9488] shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
+          <span className="px-2 text-xs font-bold uppercase tracking-widest text-slate-400">คำสั่งด่วน</span>
           <Button variant="outline" size="sm" onClick={() => handleQuickAction("present")} className="rounded-xl border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-semibold shadow-sm">
             <CheckCircle2 className="h-4 w-4 mr-2" /> มาทุกคน
           </Button>
@@ -347,7 +396,7 @@ export default function FieldAttendanceEntry() {
                 className="pl-12 h-14 rounded-2xl border-slate-200 bg-white shadow-sm font-medium text-slate-700 focus:ring-blue-500"
               />
               {isSearching && filteredEmployees.length > 0 && (
-                <Card className="absolute z-50 w-full mt-2 rounded-2xl shadow-2xl border-slate-200 overflow-hidden ring-4 ring-black/5 animate-in fade-in zoom-in-95">
+                <Card className="absolute z-50 mt-2 w-full overflow-hidden rounded-2xl border-border bg-card text-card-foreground shadow-2xl ring-4 ring-black/5 animate-in fade-in zoom-in-95">
                   <div className="max-h-80 overflow-y-auto">
                     {filteredEmployees.map((emp) => (
                       <div
@@ -360,8 +409,11 @@ export default function FieldAttendanceEntry() {
                             {emp.first_name?.[0] ?? "?"}
                           </div>
                           <div>
-                            <p className="font-bold text-slate-900">{emp.first_name} {emp.last_name}</p>
-                            <p className="text-xs font-bold text-slate-400">{emp.emp_code}</p>
+                            <EmployeeProfileName
+                              employeeCode={emp.emp_code}
+                              employee_name={emp.employee_name ?? emp.display_name}
+                              employee_profile_status={emp.employee_profile_status}
+                            />
                           </div>
                         </div>
                         <Plus className="h-5 w-5 text-blue-600" />
@@ -397,10 +449,10 @@ export default function FieldAttendanceEntry() {
 
         {/* --- MAIN ENTRY AREA --- */}
         {viewMode === "table" ? (
-          <Card className="rounded-[2rem] border-none bg-white shadow-[0_20px_50px_rgba(0,0,0,0.05)] overflow-hidden">
+          <Card className="overflow-hidden rounded-[2rem] border border-border bg-card text-card-foreground shadow-[0_20px_50px_rgba(0,0,0,0.05)]">
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1300px]">
-                <thead className="bg-slate-50/50 border-b border-slate-100">
+                <thead className="border-b border-border bg-muted text-muted-foreground">
                   <tr>
                     <th className="py-5 px-6 text-left text-[11px] font-black text-slate-400 uppercase tracking-widest">พนักงาน</th>
                     <th className="py-5 px-2 text-center text-[11px] font-black text-slate-400 uppercase tracking-widest w-24">เริ่มงาน</th>
@@ -427,13 +479,14 @@ export default function FieldAttendanceEntry() {
                           <td className="py-4 px-6">
                             <div className="flex items-center gap-3">
                               <div className={cn("h-10 w-10 rounded-xl flex items-center justify-center font-bold text-xs shadow-sm", row.leave_day ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-600")}>
-                                {String(row?.employee_code ?? "").slice(-3) || "—"}
+                                {getEmployeeCodeDisplay(row.employee_code)}
                               </div>
                               <div className="max-w-[200px]">
-                                <p className="font-black text-slate-800 truncate leading-none mb-1 text-sm">{row.employee_name}</p>
-                                <div className="flex items-center gap-1">
-                                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-tighter">{row.employee_code}</span>
-                                </div>
+                                <EmployeeProfileName
+                                  employeeCode={row.employee_code}
+                                  employee_name={row.employee_name}
+                                  employee_profile_status={row.employee_profile_status}
+                                />
                               </div>
                             </div>
                           </td>
@@ -470,7 +523,7 @@ export default function FieldAttendanceEntry() {
                                  disabled={isLeave}
                                  onClick={() => handleAddOT(index)}
                                  size="icon" 
-                                 className="h-10 w-10 shrink-0 rounded-xl bg-blue-600 hover:bg-blue-700 shadow-sm"
+                                 className="h-10 w-10 shrink-0 rounded-xl shadow-sm"
                                >
                                  <Plus className="h-4 w-4" />
                                </Button>
@@ -484,6 +537,18 @@ export default function FieldAttendanceEntry() {
                                  <Eraser className="h-4 w-4" />
                                </Button>
                             </div>
+                            {getPersistedOtSummary(row).length > 0 && (
+                              <div className="mt-2 flex flex-wrap justify-center gap-1">
+                                {getPersistedOtSummary(row).map((item) => (
+                                  <Badge
+                                    key={item.label}
+                                    className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50"
+                                  >
+                                    {item.label}: {item.value} ชม.
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
                           </td>
 
                           <td className="py-2 px-1 text-center"><Checkbox checked={row.half_day} onCheckedChange={(v) => handleUpdateRecord(index, "half_day", v)} className="h-5 w-5 rounded-md border-slate-300" /></td>
@@ -505,15 +570,18 @@ export default function FieldAttendanceEntry() {
               const isLeave = Boolean(row.leave_day);
 
               return (
-                <Card key={row.employee_code} className={cn("p-5 rounded-3xl border-none shadow-sm transition-all", row.leave_day ? "bg-red-50/50" : "bg-white")}>
+                <Card key={row.employee_code} className={cn("rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm transition-all", row.leave_day ? "bg-red-50/50 dark:bg-red-950/40" : "")}>
                    <div className="flex justify-between items-start mb-4">
                      <div className="flex items-center gap-3">
                        <div className="h-12 w-12 rounded-2xl bg-white shadow-sm border border-slate-100 flex items-center justify-center font-black text-slate-400">
-                         {String(row?.employee_code ?? "").slice(-3) || "—"}
+                         {getEmployeeCodeDisplay(row.employee_code)}
                        </div>
                        <div>
-                         <p className="font-black text-slate-900">{row.employee_name}</p>
-                         <p className="text-xs font-bold text-slate-400">{row.employee_code}</p>
+                         <EmployeeProfileName
+                           employeeCode={row.employee_code}
+                           employee_name={row.employee_name}
+                           employee_profile_status={row.employee_profile_status}
+                         />
                        </div>
                      </div>
                      <Button variant="ghost" size="icon" onClick={() => handleRemoveRecord(index)} className="text-slate-300"><Trash2 className="h-4 w-4" /></Button>
@@ -571,6 +639,18 @@ export default function FieldAttendanceEntry() {
                            <Eraser className="h-5 w-5" />
                         </Button>
                       </div>
+                      {getPersistedOtSummary(row).length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-1">
+                          {getPersistedOtSummary(row).map((item) => (
+                            <Badge
+                              key={item.label}
+                              className="border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-50"
+                            >
+                              {item.label}: {item.value} ชม.
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
                    </div>
 
                    <div className="flex gap-4 p-3 bg-slate-50/50 rounded-2xl mb-4">

@@ -1,5 +1,26 @@
 import { prisma } from "../../db";
 
+type DecimalValue = number | string | { toString(): string } | null | undefined;
+
+/**
+ * Public API contract for employee debt.
+ *
+ * `debt_amount` is the nullable DECIMAL column on employee_document_profiles;
+ * it is not derived from attendance or payroll. Keeping the conversion here
+ * makes the Decimal-to-JSON boundary explicit and prevents clients from having
+ * to guess whether Prisma returned a Decimal, string, or number.
+ */
+export function serializeEmployeeDebtAmount(value: DecimalValue): number {
+  if (value == null) return 0;
+
+  const amount = Number(value.toString());
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+export function employeeProfileWhere(companyId?: number | null) {
+  return companyId != null ? { company_id: companyId } : {};
+}
+
 /**
  * Derives a first/last name pair for the employees response WITHOUT touching the
  * underlying employee_document_profiles row.
@@ -77,7 +98,7 @@ export function resolveDisplayName(emp: {
 }
 
 export async function getAllEmployees(companyId?: number | null) {
-  const profileWhere = companyId != null ? { company_id: companyId } : {};
+  const profileWhere = employeeProfileWhere(companyId);
 
   const [employees, companies, attendanceRecords] = await Promise.all([
     prisma.employee_document_profiles.findMany({
@@ -116,11 +137,12 @@ export async function getAllEmployees(companyId?: number | null) {
     const full_name_th = `${cleaned.first_name_th || ""} ${cleaned.last_name_th || ""}`.trim() || null;
     const full_name_en = `${cleaned.first_name_en || ""} ${cleaned.last_name_en || ""}`.trim() || null;
     const display_name = resolveDisplayName(cleaned);
+    const employee_name = display_name === emp.emp_code ? null : display_name;
     return {
       ...cleaned,
       id: Number(emp.id),
       company_id: emp.company_id == null ? null : Number(emp.company_id),
-      debt_amount: emp.debt_amount == null ? 0 : Number(emp.debt_amount),
+      debt_amount: serializeEmployeeDebtAmount(emp.debt_amount),
       company_name: companyMap.get(emp.company_id || 0) || "-",
       is_matched:
         !!emp.emp_code &&
@@ -128,7 +150,8 @@ export async function getAllEmployees(companyId?: number | null) {
       full_name_th,
       full_name_en,
       display_name,
-      employee_name: display_name,
+      employee_name,
+      employee_profile_status: employee_name ? "FOUND" : "NOT_FOUND",
     };
   });
 }
@@ -166,13 +189,16 @@ export async function getEmployeesByCompany(companyId: number) {
     const full_name_th = `${cleaned.first_name_th || ""} ${cleaned.last_name_th || ""}`.trim() || null;
     const full_name_en = `${cleaned.first_name_en || ""} ${cleaned.last_name_en || ""}`.trim() || null;
     const display_name = resolveDisplayName(cleaned);
+    const employee_name = display_name === emp.emp_code ? null : display_name;
     return {
       ...cleaned,
+      debt_amount: serializeEmployeeDebtAmount(emp.debt_amount),
       company_name: company?.company_name || "-",
       full_name_th,
       full_name_en,
       display_name,
-      employee_name: display_name,
+      employee_name,
+      employee_profile_status: employee_name ? "FOUND" : "NOT_FOUND",
     };
   });
 }

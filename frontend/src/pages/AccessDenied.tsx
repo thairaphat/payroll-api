@@ -7,20 +7,20 @@ export default function AccessDenied() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#f4f6f9] p-6 flex items-center justify-center">
-      <Card className="w-full max-w-md rounded-3xl border border-[#dbe4f0] bg-white p-8 text-center shadow-xl">
-        <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center">
+    <div className="min-h-screen bg-background p-4 sm:p-6 flex items-center justify-center">
+      <Card className="surface-card w-full max-w-md p-6 text-center sm:p-8">
+        <div className="mx-auto mb-4 h-14 w-14 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
           <ShieldAlert className="h-7 w-7" />
         </div>
-        <h1 className="text-2xl font-bold text-[#0f172a]">Access Denied</h1>
-        <p className="mt-2 text-sm text-[#64748b]">
-          Your role does not have permission to view this page.
+        <h1 className="text-2xl font-bold text-slate-950">ไม่มีสิทธิ์เข้าถึง</h1>
+        <p className="mt-2 text-sm text-slate-600">
+          บัญชีของคุณไม่มีสิทธิ์เปิดหน้านี้
         </p>
         <Button
-          className="mt-6 rounded-xl bg-[#1e40af] text-white hover:bg-[#1e3a8a]"
+          className="mt-6"
           onClick={() => navigate(-1)}
         >
-          Go Back
+          กลับหน้าก่อนหน้า
         </Button>
       </Card>
     </div>

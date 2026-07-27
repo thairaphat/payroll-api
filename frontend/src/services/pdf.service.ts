@@ -3,6 +3,8 @@ import html2canvas from "html2canvas";
 import { SarabunRegular, SarabunBold } from "../assets/fonts/sarabun";
 import { NotoSansMyanmarRegular, NotoSansMyanmarBold } from "../assets/fonts/notoSansMyanmar";
 
+export const createPayrollPdfDocument = () => new jsPDF("l", "mm", "a4");
+
 export const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -31,8 +33,10 @@ export type PayrollPdfData = {
   total_ot15: number | string;
   total_ot2: number | string;
   base_income: number | string;
+  ot1_income?: number | string;
   ot15_income: number | string;
   ot2_income: number | string;
+  other_income?: number | string;
   gross_income: number | string;
   net_income: number | string;
   deduction_amount?: number | string;
@@ -159,7 +163,7 @@ export const generateNativePayrollSlipPdf = async (
   periodStart?: string,
   periodEnd?: string
 ) => {
-  const pdf = existingPdf || new jsPDF("l", "mm", "a4");
+  const pdf = existingPdf || createPayrollPdfDocument();
 
   // Setup Fonts
   pdf.addFileToVFS("Sarabun-Regular.ttf", SarabunRegular);
@@ -292,10 +296,10 @@ export const generateNativePayrollSlipPdf = async (
     { label: getLabelText("NORMAL_WAGE", lang), val: num(slip.base_income) },
     { label: getLabelText("SHIFT_ALLOWANCE", lang), val: 0 },
     { label: getLabelText("FOOD_ALLOWANCE", lang), val: 0 },
-    { label: getLabelText("OT1", lang), val: 0 },
+    { label: getLabelText("OT1", lang), val: num(slip.ot1_income) },
     { label: getLabelText("OT15", lang), val: num(slip.ot15_income) },
     { label: getLabelText("OT2", lang), val: num(slip.ot2_income) },
-    { label: getLabelText("OTHER_ALLOWANCE", lang), val: 0 },
+    { label: getLabelText("OTHER_ALLOWANCE", lang), val: num(slip.other_income) },
   ];
 
   const deductions = DEDUCTION_FIELDS.map((item) => ({
@@ -426,7 +430,7 @@ export const generateNativePayrollSlipPdf = async (
 export const generatePayrollSlipPdfFromElement = async (
   element: HTMLElement
 ) => {
-  const pdf = new jsPDF("l", "mm", "a4");
+  const pdf = createPayrollPdfDocument();
   await addPayrollSlipElementToPdf(pdf, element);
   return pdf.output("blob");
 };

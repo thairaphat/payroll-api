@@ -9,7 +9,7 @@
  * - รองรับ Mobile / Tablet / Desktop
  */
 
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "@/lib/query-client";
@@ -26,6 +26,7 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "@/components/theme-provider";
 
 import { useAuth } from "@/store/auth";
 
@@ -33,20 +34,21 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 
 import AppLayout from "@/layouts/AppLayout";
 
-import Login from "./pages/Login";
+import { StatePanel } from "@/components/layout/StatePanel";
 
-import Dashboard from "./pages/Dashboard";
-
-import Employees from "./pages/Employees";
-
-import Attendance from "./pages/Attendance";
-import FieldAttendanceEntry from "./pages/FieldAttendanceEntry";
-import Payroll from "./pages/Payroll";
-import NotFound from "./pages/NotFound.tsx";
-import AccessDenied from "./pages/AccessDenied";
-import AdminCompanies from "./pages/AdminCompanies";
-import AdminUsers from "./pages/AdminUsers";
-import AdminCompanyWages from "./pages/AdminCompanyWages";
+const Login = lazy(() => import("./pages/Login"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Employees = lazy(() => import("./pages/Employees"));
+const Attendance = lazy(() => import("./pages/Attendance"));
+const FieldAttendanceEntry = lazy(() => import("./pages/FieldAttendanceEntry"));
+const Payroll = lazy(() => import("./pages/Payroll"));
+const PayrollRuns = lazy(() => import("./pages/PayrollRuns"));
+const PayrollRunDetail = lazy(() => import("./pages/PayrollRunDetail"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const AccessDenied = lazy(() => import("./pages/AccessDenied"));
+const AdminCompanies = lazy(() => import("./pages/AdminCompanies"));
+const AdminUsers = lazy(() => import("./pages/AdminUsers"));
+const AdminCompanyWages = lazy(() => import("./pages/AdminCompanyWages"));
 
 
 /**
@@ -70,6 +72,13 @@ const AppRoutes = () => {
   }, [init]);
 
   return (
+    <Suspense
+      fallback={
+        <div className="page-shell">
+          <StatePanel kind="loading" title="กำลังเปิดหน้า" message="กรุณารอสักครู่" />
+        </div>
+      }
+    >
     <Routes>
       {/* Redirect */}
       <Route
@@ -129,6 +138,8 @@ const AppRoutes = () => {
               path="/payroll"
               element={<Payroll />}
             />
+            <Route path="/payroll-runs" element={<PayrollRuns />} />
+            <Route path="/payroll-runs/:runId" element={<PayrollRunDetail />} />
           </Route>
 
           <Route element={<ProtectedRoute allowedRoles={["cyd_admin"]} />}>
@@ -154,6 +165,7 @@ const AppRoutes = () => {
         element={<NotFound />}
       />
     </Routes>
+    </Suspense>
   );
 };
 
@@ -163,15 +175,11 @@ const AppRoutes = () => {
 
 const App = () => {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider delayDuration={200}>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider delayDuration={200}>
         {/* Global Background */}
-        <div
-            className="
-            min-h-screen
-            bg-[#f4f6f9]
-            text-[#0f172a]
-          ">
+        <div className="min-h-screen bg-background text-foreground">
           {/* Toast */}
           <Toaster />
 
@@ -187,8 +195,9 @@ const App = () => {
             <AppRoutes />
           </BrowserRouter>
         </div>
-      </TooltipProvider>
-    </QueryClientProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 };
 

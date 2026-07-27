@@ -12,6 +12,8 @@ import {
   resolveCompanyScope,
 } from "../../services/company-scope.service";
 import { logRouteEnter } from "../../diag";
+import { resolveCompanyEmployeeProfiles } from "../../services/employee-profile.service";
+import { normalizeEmployeeCode } from "../../utils/employee-profile";
 import {
   FieldAttendanceBulkError,
   saveFieldAttendanceBatch,
@@ -77,56 +79,21 @@ export const fieldAttendanceRoute = new Elysia({
       const employeeCodes = [
         ...new Set(records.map((record) => record.employee_code)),
       ];
-      const profiles = await prisma.employee_document_profiles.findMany({
-        where: { emp_code: { in: employeeCodes }, company_id: scope },
-        select: {
-          emp_code: true,
-          first_name: true,
-          last_name: true,
-          first_name_th: true,
-          last_name_th: true,
-          first_name_en: true,
-          last_name_en: true,
-        },
-      });
-      const profileMap = new Map(
-        profiles.map((profile) => [profile.emp_code, profile])
+      const profileMap = await resolveCompanyEmployeeProfiles(
+        scope,
+        employeeCodes
       );
 
       return records.map((record) => {
-        const profile = profileMap.get(record.employee_code);
-        const attendanceName = (record.employee_name ?? "").trim();
-        const thaiName = profile
-          ? `${profile.first_name_th || ""} ${profile.last_name_th || ""}`.trim()
-          : "";
-        const englishName = profile
-          ? `${profile.first_name_en || ""} ${profile.last_name_en || ""}`.trim()
-          : "";
-        const baseName = profile
-          ? `${profile.first_name || ""} ${profile.last_name || ""}`.trim()
-          : "";
-        const resolvedName =
-          attendanceName ||
-          thaiName ||
-          englishName ||
-          baseName ||
-          record.employee_code;
+        const profile = profileMap.get(
+          normalizeEmployeeCode(record.employee_code)
+        );
 
         return {
           ...record,
-          employee_name: resolvedName,
-          first_name:
-            profile?.first_name_th ||
-            profile?.first_name_en ||
-            profile?.first_name ||
-            record.first_name ||
-            null,
-          last_name:
-            profile?.last_name_th ||
-            profile?.last_name_en ||
-            profile?.last_name ||
-            record.last_name ||
-            null,
+          employee_code: normalizeEmployeeCode(record.employee_code),
+          employee_name: profile?.employeeName ?? null,
+          employee_profile_status: profile?.status ?? "NOT_FOUND",
           half_day:
             (record.raw_row_json as { half_day?: boolean } | null)?.half_day ??
             false,
