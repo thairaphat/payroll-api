@@ -8,16 +8,6 @@ export default defineConfig(({ mode }) => ({
     host: "0.0.0.0",
     port: 8080,
     allowedHosts: true,
-
-    proxy: {
-      "/api": {
-        target: "http://127.0.0.1:3001",
-        changeOrigin: true,
-        secure: false,
-        rewrite: (path) => path.replace(/^\/api/, ""),
-      },
-    },
-
     hmr: {
       overlay: false,
     },
@@ -30,7 +20,7 @@ export default defineConfig(({ mode }) => ({
 
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(process.cwd(), "./src"),
     },
   },
 }));
